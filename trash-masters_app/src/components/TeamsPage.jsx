@@ -7,30 +7,83 @@ const api = {
     Promise.resolve([
       {
         id: 1,
-        name: "Jin Phu",
-        username: "jin.admin",
+        firstName: "Jin Phu",
+        lastName: "jin.admin",
         role: "Admin",
         email: "jin@trashmasters.com",
         active: true,
       },
       {
         id: 2,
-        name: "Maria Garcia",
-        username: "maria.driver",
+        firstName: "Maria Garcia",
+        lastName: "maria.driver",
         role: "Driver",
         email: "maria@trashmasters.com",
         active: true,
       },
       {
         id: 3,
-        name: "Tom Chen",
-        username: "tom.dispatcher",
+        firstName: "Tom Chen",
+        lastName: "tom.dispatcher",
         role: "Dispatcher",
         email: "tom@trashmasters.com",
         active: false,
       },
     ]),
-  createUser: (data) => Promise.resolve({ success: true }),
+  // createUser: (data) => Promise.resolve({ success: true }),
+  createUser: async (data) => {
+    try {
+        const response = await fetch('http://localhost:8080/api/drivers/createDriver', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json', // * inform the server we are sending JSON
+            },
+            body: JSON.stringify(data)
+        });
+        return await response.json();
+    } catch (error) {
+        console.error(error);
+    }
+},
+//   createUser: async (data) => {
+//     try {
+//         const response = await fetch('https://0xew3yax3j.execute-api.us-east-1.amazonaws.com/test/addUser', {
+//             method: 'POST',
+//             headers: {
+//               'Content-Type': 'application/json', // * inform the server we are sending JSON
+//             },
+//             body: JSON.stringify(data)
+//         });
+//         return await response.json();
+//     } catch (error) {
+//         console.error(error);
+//     }
+// },
+  
+
+  // createUser: (data) = async => { 
+  //     const response = await fetch('https://0xew3yax3j.execute-api.us-east-1.amazonaws.com/test/addUser', {
+  //       method: 'POST', // * set the method to POST
+  //       headers: {
+  //         'Content-Type': 'application/json', // * inform the server we are sending JSON
+  //       },
+  //       body: JSON.stringify(data), // * convert the JavaScript object to a JSON string
+  //     })
+  //     .then(response => {
+  //       if (!response.ok) {
+  //         // Check if the response status is okay (e.g., 200-299)
+  //         throw new Error('Network response was not ok: ' + response.statusText);
+  //       }
+  //     return response.json(); // * parse the JSON response from the server
+  //     })
+  //     // .then(data => {
+  //     //   console.log('Success:', data); // * handle the successful response data
+  //     // })
+  //     // .catch((error) => {
+  //     //   console.error('Error:', error); // * handle any errors during the fetch operation
+  //     // });
+  // },
+  
   updateUser: (id, data) => Promise.resolve({ success: true }),
   deleteUser: (id) => Promise.resolve({ success: true }),
   resetPassword: (id) => Promise.resolve({ success: true }),
@@ -46,8 +99,8 @@ const TeamsPage = () => {
   const [editingUser, setEditingUser] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [formData, setFormData] = useState({
-    name: "",
-    username: "",
+    firstName: "",
+    lastName: "",
     email: "",
     role: "Driver",
     active: true,
@@ -79,12 +132,12 @@ const TeamsPage = () => {
   };
 
   const validateForm = () => {
-    if (!formData.name.trim()) return "Name is required";
-    if (!formData.username.trim()) return "Username is required";
+    if (!formData.firstName.trim()) return "First name is required";
+    if (!formData.lastName.trim()) return "Last name is required";
     if (!formData.email.trim()) return "Email is required";
     if (!/\S+@\S+\.\S+/.test(formData.email)) return "Email is invalid";
-    if (formData.username.length < 3)
-      return "Username must be at least 3 characters";
+    if (formData.lastName.length < 3)
+      return "Last name must be at least 3 characters";
     return "";
   };
 
@@ -94,6 +147,8 @@ const TeamsPage = () => {
       setFormError(error);
       return;
     }
+
+
 
     try {
       if (editingUser) {
@@ -105,13 +160,14 @@ const TeamsPage = () => {
         );
       } else {
         await api.createUser(formData);
+        
         const newUser = { id: Date.now(), ...formData };
         setUsers([...users, newUser]);
       }
 
       setFormData({
-        name: "",
-        username: "",
+        firstName: "",
+        lastName: "",
         email: "",
         role: "Driver",
         active: true,
@@ -146,8 +202,8 @@ const TeamsPage = () => {
 
   const filteredUsers = users.filter((user) => {
     const matchesSearch =
-      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesRole = filterRole === "All" || user.role === filterRole;
     return matchesSearch && matchesRole;
@@ -357,7 +413,7 @@ const TeamsPage = () => {
         <input
           type="text"
           className="search-input"
-          placeholder="Search by name, username, or email..."
+          placeholder="Search by firstname, lastname, or email..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
@@ -381,8 +437,8 @@ const TeamsPage = () => {
       <table className="users-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Username</th>
+            <th>FirstName</th>
+            <th>LastName</th>
             <th>Role</th>
             <th>Status</th>
             <th>Contact</th>
@@ -399,8 +455,8 @@ const TeamsPage = () => {
           ) : (
             filteredUsers.map((user) => (
               <tr key={user.id}>
-                <td>{user.name}</td>
-                <td>{user.username}</td>
+                <td>{user.firstName}</td>
+                <td>{user.lastName}</td>
                 <td>
                   <span className={`role-badge ${user.role.toLowerCase()}`}>
                     {user.role}
@@ -422,8 +478,8 @@ const TeamsPage = () => {
                     onClick={() => {
                       setEditingUser(user);
                       setFormData({
-                        name: user.name,
-                        username: user.username,
+                        firstName: user.firstName,
+                        lastName: user.lastName,
                         email: user.email,
                         role: user.role,
                         active: user.active,
@@ -465,19 +521,19 @@ const TeamsPage = () => {
             <h2>{editingUser ? "Edit User" : "Add New User"}</h2>
 
             <div className="form-group">
-              <label>Name</label>
+              <label>FirstName</label>
               <input
-                name="name"
-                value={formData.name}
+                name="firstName"
+                value={formData.firstName}
                 onChange={handleInputChange}
               />
             </div>
 
             <div className="form-group">
-              <label>Username</label>
+              <label>LastName</label>
               <input
-                name="username"
-                value={formData.username}
+                name="lastName"
+                value={formData.lastName}
                 onChange={handleInputChange}
               />
             </div>
