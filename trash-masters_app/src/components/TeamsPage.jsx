@@ -3,33 +3,53 @@ import React, { useState, useEffect } from "react";
 
 // Mock API service
 const api = {
-  fetchUsers: () =>
-    Promise.resolve([
-      {
-        id: 1,
-        firstName: "Jin Phu",
-        lastName: "jin.admin",
-        role: "Admin",
-        email: "jin@trashmasters.com",
-        active: true,
-      },
-      {
-        id: 2,
-        firstName: "Maria Garcia",
-        lastName: "maria.driver",
-        role: "Driver",
-        email: "maria@trashmasters.com",
-        active: true,
-      },
-      {
-        id: 3,
-        firstName: "Tom Chen",
-        lastName: "tom.dispatcher",
-        role: "Dispatcher",
-        email: "tom@trashmasters.com",
-        active: false,
-      },
-    ]),
+  fetchUsers: async ()=>{
+      try {
+        const response = await fetch('http://localhost:8080/api/drivers', {
+            // method: 'GET',
+            // headers: {
+            //   'Content-Type': 'application/json', // * inform the server we are sending JSON
+            // },
+            // body: JSON.stringify(data)
+        });
+        const userTable = await response.json()
+        console.log("User Table: ",userTable)
+        return await userTable;
+    } catch (error) {
+        console.error(error);
+    }
+  },
+
+
+  // // for local data only  
+  // fetchUsers: () =>
+  //   Promise.resolve([
+  //     {
+  //       id: 1,
+  //       firstName: "Jin Phu",
+  //       lastName: "jin.admin",
+  //       role: "Admin",
+  //       email: "jin@trashmasters.com",
+  //       active: true,
+  //     },
+  //     {
+  //       id: 2,
+  //       firstName: "Maria Garcia",
+  //       lastName: "maria.driver",
+  //       role: "Driver",
+  //       email: "maria@trashmasters.com",
+  //       active: true,
+  //     },
+  //     {
+  //       id: 3,
+  //       firstName: "Tom Chen",
+  //       lastName: "tom.dispatcher",
+  //       role: "Dispatcher",
+  //       email: "tom@trashmasters.com",
+  //       active: false,
+  //     },
+  //   ]),
+
   // createUser: (data) => Promise.resolve({ success: true }),
   createUser: async (data) => {
     try {
@@ -44,45 +64,7 @@ const api = {
     } catch (error) {
         console.error(error);
     }
-},
-//   createUser: async (data) => {
-//     try {
-//         const response = await fetch('https://0xew3yax3j.execute-api.us-east-1.amazonaws.com/test/addUser', {
-//             method: 'POST',
-//             headers: {
-//               'Content-Type': 'application/json', // * inform the server we are sending JSON
-//             },
-//             body: JSON.stringify(data)
-//         });
-//         return await response.json();
-//     } catch (error) {
-//         console.error(error);
-//     }
-// },
-  
-
-  // createUser: (data) = async => { 
-  //     const response = await fetch('https://0xew3yax3j.execute-api.us-east-1.amazonaws.com/test/addUser', {
-  //       method: 'POST', // * set the method to POST
-  //       headers: {
-  //         'Content-Type': 'application/json', // * inform the server we are sending JSON
-  //       },
-  //       body: JSON.stringify(data), // * convert the JavaScript object to a JSON string
-  //     })
-  //     .then(response => {
-  //       if (!response.ok) {
-  //         // Check if the response status is okay (e.g., 200-299)
-  //         throw new Error('Network response was not ok: ' + response.statusText);
-  //       }
-  //     return response.json(); // * parse the JSON response from the server
-  //     })
-  //     // .then(data => {
-  //     //   console.log('Success:', data); // * handle the successful response data
-  //     // })
-  //     // .catch((error) => {
-  //     //   console.error('Error:', error); // * handle any errors during the fetch operation
-  //     // });
-  // },
+  },
   
   updateUser: (id, data) => Promise.resolve({ success: true }),
   deleteUser: (id) => Promise.resolve({ success: true }),
