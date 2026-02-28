@@ -5,7 +5,7 @@ import React, { useState, useEffect } from "react";
 const api = {
   fetchUsers: async ()=>{
       try {
-        const response = await fetch('http://localhost:8080/api/drivers', {
+        const response = await fetch('http://localhost:8080/api/employees', {
             // method: 'GET',
             // headers: {
             //   'Content-Type': 'application/json', // * inform the server we are sending JSON
@@ -53,7 +53,7 @@ const api = {
   // createUser: (data) => Promise.resolve({ success: true }),
   createUser: async (data) => {
     try {
-        const response = await fetch('http://localhost:8080/api/drivers/createDriver', {
+        const response = await fetch('http://localhost:8080/api/employees/createEmployee', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json', // * inform the server we are sending JSON
@@ -71,21 +71,22 @@ const api = {
   resetPassword: (id) => Promise.resolve({ success: true }),
 };
 
-const ROLES = ["Admin", "Dispatcher", "Driver"];
+const ROLES = ["ADMIN", "Dispatcher", "DRIVER"];
 
 const TeamsPage = () => {
   const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [formData, setFormData] = useState({
+    employeeId:"0001",
     firstName: "",
     lastName: "",
     email: "",
-    role: "Driver",
-    active: true,
+    role: "DRIVER",
+    status: "ACTIVE",
   });
   const [formError, setFormError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -148,11 +149,12 @@ const TeamsPage = () => {
       }
 
       setFormData({
+        employeeId:"0002",
         firstName: "",
         lastName: "",
         email: "",
-        role: "Driver",
-        active: true,
+        role: "DRIVER",
+        status: "ACTIVE",
       });
       setFormError("");
       setShowAddModal(false);
@@ -460,6 +462,7 @@ const TeamsPage = () => {
                     onClick={() => {
                       setEditingUser(user);
                       setFormData({
+                        employeeId: user.employeeId,
                         firstName: user.firstName,
                         lastName: user.lastName,
                         email: user.email,
@@ -501,6 +504,15 @@ const TeamsPage = () => {
         >
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h2>{editingUser ? "Edit User" : "Add New User"}</h2>
+
+            <div className="form-group">
+              <label>EmployeeID</label>
+              <input
+                name="employeeId"
+                value={formData.employeeId }
+                onChange={handleInputChange}
+              />
+            </div>
 
             <div className="form-group">
               <label>FirstName</label>
