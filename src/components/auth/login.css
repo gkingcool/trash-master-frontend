@@ -1,9 +1,11 @@
 /* src/components/auth/login.css */
+/* =========================================
+   ORIGINAL CSS
+   ========================================= */
 .login-container {
   display: flex;
   height: 100vh;
 }
-
 .left-panel {
   width: 50%;
   background-color: #f2f7f4;
@@ -12,7 +14,6 @@
   align-items: center;
   padding: 0;
 }
-
 .right-panel {
   width: 50%;
   background-color: white;
@@ -21,34 +22,29 @@
   flex-direction: column;
   justify-content: flex-start;
 }
-
 .header {
   display: flex;
   align-items: center;
   margin-bottom: 20px;
   padding-left: 10px;
 }
-
 .logo-icon {
   width: 24px;
   height: 24px;
   margin-right: 5px;
 }
-
 .header h1 {
   font-size: 20px;
   font-weight: 500;
   color: #333;
   margin: 0;
 }
-
 /* Password field with eye toggle */
 .password-wrapper {
   position: relative;
   display: flex;
   align-items: center;
 }
-
 .password-input {
   width: 100%;
   padding: 10px 40px 10px 12px; /* Extra right padding for icon */
@@ -57,7 +53,6 @@
   font-size: 14px;
   box-sizing: border-box;
 }
-
 .toggle-password {
   position: absolute;
   right: 12px;
@@ -72,12 +67,10 @@
   align-items: center;
   justify-content: center;
 }
-
 .toggle-password:hover {
   background: #edf2f7;
   color: #4a5568;
 }
-
 .form-container {
   width: 100%;
   flex-grow: 1;
@@ -85,30 +78,25 @@
   justify-content: center;
   align-items: center;
 }
-
 .login-form {
   max-width: 400px;
   width: 100%;
   text-align: left;
 }
-
 .login-form h2 {
   font-size: 24px;
   font-weight: bold;
   color: #333;
   margin-bottom: 5px;
 }
-
 .login-form p {
   color: #666;
   margin-bottom: 30px;
   font-size: 14px;
 }
-
 .form-group {
   margin-bottom: 20px;
 }
-
 .form-group label {
   display: block;
   margin-bottom: 5px;
@@ -116,7 +104,6 @@
   font-size: 14px;
   color: #333;
 }
-
 .form-group input {
   width: 100%;
   padding: 10px;
@@ -125,12 +112,10 @@
   font-size: 14px;
   outline: none;
 }
-
 .form-group input:focus {
   border-color: #4caf50;
   box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
 }
-
 .login-button {
   width: 100%;
   padding: 12px;
@@ -143,11 +128,9 @@
   cursor: pointer;
   transition: background-color 0.3s ease;
 }
-
 .login-button:hover {
   background-color: #45a049;
 }
-
 .truck-image {
   max-width: 60%;
   max-height: 60vh;
@@ -157,6 +140,37 @@
   outline: none;
   box-shadow: none;
   background: transparent;
+}
+
+/* =========================================
+   NEW CSS - ADDED FOR FORGOT/RESET PASSWORD
+   ========================================= */
+.forgot-password-link {
+  text-align: right;
+  margin-top: 8px;
+}
+
+.forgot-password-link a {
+  color: #38a169;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.forgot-password-link a:hover {
+  text-decoration: underline;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #38a169;
+  cursor: pointer;
+  font-size: 14px;
+  margin-top: 16px;
+}
+
+.link-button:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 768px) {

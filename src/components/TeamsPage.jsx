@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-// Backend API endpoint
 const API_BASE_URL = "http://localhost:8080/api/employees";
 
 const api = {
@@ -21,7 +20,7 @@ const api = {
     });
     return response.data;
   },
-  // KEY FIX: Use employeeId (custom field) for update, not MongoDB _id
+  // ✅ FIX: Use employeeId (custom field) for update
   updateUser: async (employeeId, data) => {
     const response = await axios.put(`${API_BASE_URL}/${employeeId}`, {
       firstName: data.firstName,
@@ -31,14 +30,13 @@ const api = {
     });
     return response.data;
   },
-  // KEY FIX: Use employeeId (custom field) for delete, not MongoDB _id
+  // ✅ FIX: Use employeeId (custom field) for delete
   deleteUser: async (employeeId) => {
     await axios.delete(`${API_BASE_URL}/${employeeId}`);
     return { success: true };
   },
 };
 
-// Only Admin and Driver roles (no Dispatcher)
 const ROLES = ["Admin", "Driver"];
 
 const TeamsPage = () => {
@@ -61,29 +59,31 @@ const TeamsPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState("All");
 
+  // Load users function (extracted for re-use)
+  const loadUsers = async () => {
+    try {
+      const data = await api.fetchUsers();
+      const mappedUsers = data.map((user) => ({
+        ...user,
+        name: `${user.firstName} ${user.lastName}`,
+        role: user.role
+          ? user.role.toString().charAt(0).toUpperCase() +
+            user.role.toString().slice(1).toLowerCase()
+          : "Driver",
+        active: user.status === "ACTIVE" || user.active === true,
+      }));
+      setUsers(mappedUsers);
+      setLoading(false);
+    } catch (err) {
+      console.error("Error fetching employees:", err);
+      setError(
+        "Failed to load team members. Make sure backend is running on http://localhost:8080",
+      );
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadUsers = async () => {
-      try {
-        const data = await api.fetchUsers();
-        const mappedUsers = data.map((user) => ({
-          ...user,
-          name: `${user.firstName} ${user.lastName}`,
-          role: user.role
-            ? user.role.toString().charAt(0).toUpperCase() +
-              user.role.toString().slice(1).toLowerCase()
-            : "Driver",
-          active: user.status === "ACTIVE" || user.active === true,
-        }));
-        setUsers(mappedUsers);
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching employees:", err);
-        setError(
-          "Failed to load team members. Make sure backend is running on http://localhost:8080",
-        );
-        setLoading(false);
-      }
-    };
     loadUsers();
   }, []);
 
@@ -117,26 +117,14 @@ const TeamsPage = () => {
     }
     try {
       if (editingUser) {
-        // KEY FIX: Pass employeeId for update, not MongoDB _id
+        // ✅ FIX: Use employeeId for API call
         await api.updateUser(editingUser.employeeId, formData);
-        setUsers(
-          users.map((u) =>
-            u.employeeId === editingUser.employeeId ? { ...u, ...formData } : u,
-          ),
-        );
       } else {
-        const newUser = await api.createUser(formData);
-        const mappedUser = {
-          ...newUser,
-          name: `${newUser.firstName} ${newUser.lastName}`,
-          role: newUser.role
-            ? newUser.role.toString().charAt(0).toUpperCase() +
-              newUser.role.toString().slice(1).toLowerCase()
-            : "Driver",
-          active: newUser.status === "ACTIVE" || newUser.active === true,
-        };
-        setUsers([...users, mappedUser]);
+        await api.createUser(formData);
       }
+      // ✅ FIX: Always reload from backend to ensure data consistency
+      await loadUsers();
+
       setFormData({
         employeeId: "",
         firstName: "",
@@ -160,9 +148,10 @@ const TeamsPage = () => {
 
   const handleDeleteUser = async () => {
     try {
-      // KEY FIX: Pass employeeId for delete, not MongoDB _id
+      // ✅ FIX: Use employeeId for delete
       await api.deleteUser(confirmDelete.employeeId);
-      setUsers(users.filter((u) => u.employeeId !== confirmDelete.employeeId));
+      // ✅ FIX: Reload from backend
+      await loadUsers();
       setConfirmDelete(null);
     } catch (err) {
       alert("Failed to delete employee: " + err.message);
@@ -457,10 +446,13 @@ const TeamsPage = () => {
               >
                 Cancel
               </button>
-              <button className="btn-primary" onClick={handleSaveUser}>
+              {/* <button className="btn-primary" onClick={handleSaveUser}>
                 {editingUser
                   ? `Update ${editingUser.role}`
                   : `Add ${formData.role}`}
+              </button> */}
+              <button className="btn-primary" onClick={handleSaveUser}>
+                {editingUser ? "Update" : `Add ${formData.role}`}
               </button>
             </div>
           </div>

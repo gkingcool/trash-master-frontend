@@ -95,23 +95,134 @@
 //   );
 // };
 
-// export default Login;
+// import React, { useState } from "react";
+// import "./Login.css";
+// import logo from "../../assets/icons/recycling-icon.png";
+// import truck from "../../assets/icons/truck.png";
+
+// const Login = ({ onLoginSuccess }) => {
+//   const [username, setUsername] = useState("");
+//   const [password, setPassword] = useState("");
+//   const [error, setError] = useState("");
+//   const [showPassword, setShowPassword] = useState(false); // 👁️ Toggle state
+
+//   const handleSubmit = (e) => {
+//     e.preventDefault();
+
+//     if (username === "admin" && password === "password") {
+//       localStorage.setItem(
+//         "auth",
+//         JSON.stringify({
+//           isAuthenticated: true,
+//           role: "Admin",
+//         }),
+//       );
+//       onLoginSuccess();
+//     } else if (username === "driver" && password === "driverpass") {
+//       localStorage.setItem(
+//         "auth",
+//         JSON.stringify({
+//           isAuthenticated: true,
+//           role: "Driver",
+//         }),
+//       );
+//       onLoginSuccess();
+//     } else {
+//       setError("Invalid credentials. Try: admin/password or driver/driverpass");
+//     }
+//   };
+
+//   return (
+//     <div className="login-container">
+//       <div className="left-panel">
+//         <img src={truck} alt="truck" className="truck-image" />
+//       </div>
+
+//       <div className="right-panel">
+//         <div className="header">
+//           <img src={logo} alt="Logo" className="logo-icon" />
+//           <h1>Trash Master Co.</h1>
+//         </div>
+
+//         <div className="form-container">
+//           <div className="login-form">
+//             <h2>Welcome Back</h2>
+//             <p>Please enter your login</p>
+
+//             {error && (
+//               <p style={{ color: "red", marginBottom: "15px" }}>{error}</p>
+//             )}
+
+//             <form onSubmit={handleSubmit}>
+//               <div className="form-group">
+//                 <label htmlFor="username">User Name or Email Address</label>
+//                 <input
+//                   type="text"
+//                   id="username"
+//                   value={username}
+//                   onChange={(e) => setUsername(e.target.value)}
+//                   placeholder="admin or driver"
+//                 />
+//               </div>
+
+//               <div className="form-group">
+//                 <label htmlFor="password">Password</label>
+
+//                 <div className="password-wrapper">
+//                   <input
+//                     type={showPassword ? "text" : "password"}
+//                     id="password"
+//                     value={password}
+//                     onChange={(e) => setPassword(e.target.value)}
+//                     placeholder="password"
+//                     className="password-input"
+//                   />
+//                   <button
+//                     type="button"
+//                     className="toggle-password"
+//                     onClick={() => setShowPassword(!showPassword)}
+//                     aria-label={
+//                       showPassword ? "Hide password" : "Show password"
+//                     }
+//                   >
+//                     {showPassword ? "👁️" : "👁️‍🗨️"}{" "}
+//                     {/* 👁️ Open eye / 👁️‍🗨️ Closed eye */}
+//                   </button>
+//                 </div>
+//               </div>
+
+//               <button type="submit" className="login-button">
+//                 Login
+//               </button>
+//             </form>
+//           </div>
+//         </div>
+//       </div>
+//     </div>
+//   );
+// };
+
 // src/components/auth/Login.jsx
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./login.css";
 import logo from "../../assets/icons/recycling-icon.png";
 import truck from "../../assets/icons/truck.png";
 
 const Login = ({ onLoginSuccess }) => {
+  const navigate = useNavigate(); // ✅ Add this hook
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [showPassword, setShowPassword] = useState(false); // 👁️ Toggle state
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
 
-    if (username === "admin" && password === "password") {
+    const cleanUsername = username.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
+    if (cleanUsername === "admin" && cleanPassword === "password") {
       localStorage.setItem(
         "auth",
         JSON.stringify({
@@ -120,7 +231,7 @@ const Login = ({ onLoginSuccess }) => {
         }),
       );
       onLoginSuccess();
-    } else if (username === "driver" && password === "driverpass") {
+    } else if (cleanUsername === "driver" && cleanPassword === "driverpass") {
       localStorage.setItem(
         "auth",
         JSON.stringify({
@@ -148,7 +259,7 @@ const Login = ({ onLoginSuccess }) => {
 
         <div className="form-container">
           <div className="login-form">
-            <h2>Welcome Back</h2>
+            <h2>Welcome To Trashmaster</h2>
             <p>Please enter your login</p>
 
             {error && (
@@ -187,8 +298,25 @@ const Login = ({ onLoginSuccess }) => {
                       showPassword ? "Hide password" : "Show password"
                     }
                   >
-                    {showPassword ? "👁️" : "👁️‍🗨️"}{" "}
-                    {/* 👁️ Open eye / 👁️‍🗨️ Closed eye */}
+                    {showPassword ? "👁️" : "👁️‍🗨️"}
+                  </button>
+                </div>
+
+                <div className="forgot-password-link">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/forgot-password")}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#38a169",
+                      cursor: "pointer",
+                      fontSize: "14px",
+                      padding: "0",
+                      textDecoration: "none",
+                    }}
+                  >
+                    Forgot Password?
                   </button>
                 </div>
               </div>
