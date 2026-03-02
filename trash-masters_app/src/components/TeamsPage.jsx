@@ -66,8 +66,23 @@ const api = {
     }
   },
   
-  updateUser: (id, data) => Promise.resolve({ success: true }),
-  deleteUser: (id) => Promise.resolve({ success: true }),
+  deleteUser: async (id, data) => {
+    console.log("DeleteUser ID: ", id)
+    try {
+        const response = await fetch(`http://localhost:8080/api/employees/${id}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json', // * inform the server we are sending JSON
+            },
+            // body: JSON.stringify(data)
+        });
+        console.log("Record: ", id, ", deleted successfully.")
+        return response;
+    } catch (error) {
+        console.error("Delete error: ",error);
+    }
+  },
+  updateUser: (id) => Promise.resolve({ success: true }),
   resetPassword: (id) => Promise.resolve({ success: true }),
 };
 
@@ -166,13 +181,22 @@ const TeamsPage = () => {
 
   const handleDeleteUser = async () => {
     try {
-      await api.deleteUser(confirmDelete.id);
-      setUsers(users.filter((u) => u.id !== confirmDelete.id));
+      await api.deleteUser(confirmDelete.employeeId);
+      setUsers(users.filter((u) => u.employeeId !== confirmDelete.employeeId));
       setConfirmDelete(null);
     } catch (err) {
       alert("Failed to delete user");
     }
   };
+  // const handleDeleteUser = async () => {
+  //   try {
+  //     await api.deleteUser(confirmDelete.id);
+  //     setUsers(users.filter((u) => u.id !== confirmDelete.id));
+  //     setConfirmDelete(null);
+  //   } catch (err) {
+  //     alert("Failed to delete user");
+  //   }
+  // };
 
   const handleResetPassword = async (user) => {
     if (!window.confirm(`Send a temporary password to ${user.email}?`)) return;
