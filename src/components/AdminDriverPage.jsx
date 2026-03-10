@@ -27,7 +27,9 @@ const AdminDriverPage = () => {
             status:
               emp.status === "ACTIVE" || emp.active ? "active" : "offline",
             currentRoute: null,
-            vehicle: `Truck #${Math.floor(Math.random() * 20) + 1}`,
+            // vehicle: `Truck #${Math.floor(Math.random() * 20) + 1}`,
+            // Deterministic vehicle assignment based on employeeId
+            vehicle: `Truck #${(parseInt(emp.employeeId?.replace(/\D/g, "") || "0") % 20) + 1}`,
             completedStops: Math.floor(Math.random() * 15),
             totalStops: Math.floor(Math.random() * 20) + 10,
             progress: 0,

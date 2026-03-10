@@ -120,6 +120,7 @@ import AdminRoutePlanner from "./components/AdminRoutePlanner";
 import TeamsPage from "./components/TeamsPage";
 import DriverPage from "./components/DriverPage";
 import AdminDriverPage from "./components/AdminDriverPage";
+import SettingsPage from "./components/SettingsPage";
 
 // Protected Route wrapper - checks auth on every render
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -178,6 +179,7 @@ export default function App() {
           <Route path="drivers" element={<AdminDriverPage />} />
           <Route path="route-planner" element={<AdminRoutePlanner />} />
           <Route path="teams" element={<TeamsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
 
         {/* Catch all */}
