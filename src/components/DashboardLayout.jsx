@@ -1,8 +1,7 @@
 // src/components/DashboardLayout.jsx
 import React from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-
-// Icons
+import Notifications from "./Notifications";
 import dashboardIcon from "../assets/icons/dashboard.png";
 import routePlannerIcon from "../assets/icons/route-planner.png";
 import driversIcon from "../assets/icons/drivers.png";
@@ -12,13 +11,40 @@ import deploymentsIcon from "../assets/icons/deployments.png";
 import settingsIcon from "../assets/icons/settings.png";
 import logoIcon from "../assets/icons/recycling-icon.png";
 import bellIcon from "../assets/icons/bell-icon.png";
+import binsIcon from "../assets/icons/bins.png";
+
+// ✅ Helper to get current logged-in user info
+const getCurrentUser = () => {
+  try {
+    const auth = JSON.parse(localStorage.getItem("auth"));
+    if (auth && auth.firstName && auth.lastName) {
+      return {
+        name: `${auth.firstName} ${auth.lastName}`,
+        initials: `${auth.firstName[0]}${auth.lastName[0]}`.toUpperCase(),
+        email: auth.email || "N/A",
+      };
+    }
+  } catch (e) {
+    console.warn("Auth data not found or invalid");
+  }
+  // Fallback
+  return {
+    name: "Admin User",
+    initials: "AU",
+    email: "admin@trashmasters.com",
+  };
+};
 
 export default function DashboardLayout() {
   const location = useLocation();
 
+  // ✅ Get current user
+  const user = getCurrentUser();
+
+  // ✅ FIXED: Redirect to login page
   const handleLogout = () => {
     localStorage.removeItem("auth");
-    window.location.reload();
+    window.location.href = "/login";
   };
 
   const isActive = (path) => location.pathname === path;
@@ -27,6 +53,9 @@ export default function DashboardLayout() {
     const titles = {
       "/route-planner": "Admin Route Planner",
       "/teams": "Team Management",
+      "/bins": "Bin Management",
+      "/drivers": "Driver Management",
+      "/settings": "Settings",
     };
     return titles[location.pathname] || "Dashboard";
   };
@@ -40,7 +69,6 @@ export default function DashboardLayout() {
           height: 100vh;
           background-color: #f5f7fa;
         }
-        
         .sidebar {
           width: 240px;
           background: white;
@@ -49,7 +77,6 @@ export default function DashboardLayout() {
           display: flex;
           flex-direction: column;
         }
-        
         .sidebar-header {
           padding: 0 20px 20px;
           font-weight: 600;
@@ -60,20 +87,17 @@ export default function DashboardLayout() {
           display: flex;
           align-items: center;
         }
-        
         .sidebar-header img {
           width: 24px;
           height: 24px;
           margin-right: 10px;
           object-fit: contain;
         }
-        
         .sidebar-nav ul {
           list-style: none;
           padding: 0 10px;
           margin: 0;
         }
-        
         .nav-link {
           display: flex;
           align-items: center;
@@ -83,32 +107,27 @@ export default function DashboardLayout() {
           color: #4a5568;
           border-left: 4px solid transparent;
         }
-        
         .nav-link:hover {
           background-color: #f8fafc;
         }
-        
         .nav-link.active {
           background-color: #edf2f7;
-          border-left: 4px solid #38A169; /* GREEN ACCENT */
+          border-left: 4px solid #38A169;
           font-weight: 600;
           color: #2d3748;
         }
-        
         .nav-link img {
           width: 20px;
           height: 20px;
           margin-right: 12px;
           object-fit: contain;
         }
-        
         .main-area {
           flex: 1;
           display: flex;
           flex-direction: column;
           overflow: hidden;
         }
-        
         .top-bar {
           padding: 15px 25px;
           background: white;
@@ -117,19 +136,16 @@ export default function DashboardLayout() {
           justify-content: space-between;
           align-items: center;
         }
-        
         .top-bar h1 {
           font-size: 20px;
           font-weight: 600;
           color: #2d3748;
         }
-        
         .header-actions {
           display: flex;
           gap: 16px;
           align-items: center;
         }
-        
         .btn-icon {
           display: flex;
           align-items: center;
@@ -142,23 +158,24 @@ export default function DashboardLayout() {
           cursor: pointer;
           transition: all 0.2s;
         }
-
         .btn-icon img {
-          width: 16px;    /* Reduced from 18px */
-          height: 16px;   /* Reduced from 18px */
+          width: 16px;
+          height: 16px;
           object-fit: contain;
         }
-        
+        .btn-icon:hover {
+          background: #edf2f7;
+        }
+        /* ✅ Added hover effect */
         .user-avatar-container {
           position: relative;
           display: inline-block;
         }
-
         .user-avatar {
           width: 36px;
           height: 36px;
           border-radius: 50%;
-          background-color: #38A169; /* GREEN */
+          background-color: #38A169;
           color: white;
           font-weight: 600;
           font-size: 12px;
@@ -168,7 +185,6 @@ export default function DashboardLayout() {
           cursor: pointer;
           border: none;
         }
-
         .logout-tooltip {
           position: absolute;
           bottom: -32px;
@@ -186,16 +202,14 @@ export default function DashboardLayout() {
           pointer-events: none;
           z-index: 10;
         }
-
         .user-avatar-container:hover .logout-tooltip {
           opacity: 1;
           visibility: visible;
         }
-        
         .content-wrapper {
           flex: 1;
           overflow-y: auto;
-          padding: 0; /* AdminRoutePlanner handles its own padding */
+          padding: 0;
         }
       `}</style>
 
@@ -253,6 +267,15 @@ export default function DashboardLayout() {
             </li>
             <li>
               <Link
+                to="/bins"
+                className={`nav-link ${isActive("/bins") ? "active" : ""}`}
+              >
+                <img src={binsIcon} alt="Bins" />
+                <span>Bins</span>
+              </Link>
+            </li>
+            <li>
+              <Link
                 to="/deployments"
                 className={`nav-link ${isActive("/deployments") ? "active" : ""}`}
               >
@@ -277,16 +300,21 @@ export default function DashboardLayout() {
         <header className="top-bar">
           <h1>{getPageTitle()}</h1>
           <div className="header-actions">
-            <button className="btn-icon" aria-label="Notifications">
+            {/* Bell Icon - Add notification functionality if needed */}
+            {/*  <button className="btn-icon" aria-label="Notifications">
               <img src={bellIcon} alt="Notifications" />
-            </button>
+            </button> */}
+            <Notifications />
+
+            {/* ✅ Dynamic User Avatar with Initials */}
             <div className="user-avatar-container">
               <button
                 className="user-avatar"
                 onClick={handleLogout}
                 aria-label="Log out"
+                title={`Logged in as ${user.name}`}
               >
-                JP
+                {user.initials}
               </button>
               <div className="logout-tooltip">Log out</div>
             </div>

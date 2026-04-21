@@ -17,10 +17,10 @@ const api = {
       email: data.email,
       phone: data.phone,
       role: data.role?.toUpperCase() || "DRIVER",
+      password: data.password,
     });
     return response.data;
   },
-  // ✅ FIX: Use employeeId (custom field) for update
   updateUser: async (employeeId, data) => {
     const response = await axios.put(`${API_BASE_URL}/${employeeId}`, {
       firstName: data.firstName,
@@ -30,10 +30,18 @@ const api = {
     });
     return response.data;
   },
-  // ✅ FIX: Use employeeId (custom field) for delete
   deleteUser: async (employeeId) => {
     await axios.delete(`${API_BASE_URL}/${employeeId}`);
     return { success: true };
+  },
+  resetPassword: async (employeeId, newPassword) => {
+    const response = await axios.put(
+      `${API_BASE_URL}/${employeeId}/reset-password`,
+      {
+        newPassword: newPassword,
+      },
+    );
+    return response.data;
   },
 };
 
@@ -46,6 +54,13 @@ const TeamsPage = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetPasswordData, setResetPasswordData] = useState({
+    employeeId: "",
+    employeeName: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
   const [formData, setFormData] = useState({
     employeeId: "",
     firstName: "",
@@ -54,12 +69,12 @@ const TeamsPage = () => {
     phone: "",
     role: "Driver",
     active: true,
+    password: "",
   });
   const [formError, setFormError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState("All");
 
-  // Load users function (extracted for re-use)
   const loadUsers = async () => {
     try {
       const data = await api.fetchUsers();
@@ -106,6 +121,9 @@ const TeamsPage = () => {
     ) {
       return "Phone must be at least 10 digits";
     }
+    if (!editingUser && (!formData.password || formData.password.length < 6)) {
+      return "Password must be at least 6 characters";
+    }
     return "";
   };
 
@@ -117,14 +135,11 @@ const TeamsPage = () => {
     }
     try {
       if (editingUser) {
-        // ✅ FIX: Use employeeId for API call
         await api.updateUser(editingUser.employeeId, formData);
       } else {
         await api.createUser(formData);
       }
-      // ✅ FIX: Always reload from backend to ensure data consistency
       await loadUsers();
-
       setFormData({
         employeeId: "",
         firstName: "",
@@ -133,6 +148,7 @@ const TeamsPage = () => {
         phone: "",
         role: "Driver",
         active: true,
+        password: "",
       });
       setFormError("");
       setShowAddModal(false);
@@ -148,15 +164,53 @@ const TeamsPage = () => {
 
   const handleDeleteUser = async () => {
     try {
-      // ✅ FIX: Use employeeId for delete
       await api.deleteUser(confirmDelete.employeeId);
-      // ✅ FIX: Reload from backend
       await loadUsers();
       setConfirmDelete(null);
     } catch (err) {
       alert("Failed to delete employee: " + err.message);
       console.error("Error deleting employee:", err);
     }
+  };
+
+  const handleResetPassword = async () => {
+    if (resetPasswordData.newPassword !== resetPasswordData.confirmPassword) {
+      alert("Passwords do not match!");
+      return;
+    }
+    if (resetPasswordData.newPassword.length < 6) {
+      alert("Password must be at least 6 characters");
+      return;
+    }
+    try {
+      await api.resetPassword(
+        resetPasswordData.employeeId,
+        resetPasswordData.newPassword,
+      );
+      alert(
+        `Password reset successfully for ${resetPasswordData.employeeName}!`,
+      );
+      setShowResetPassword(false);
+      setResetPasswordData({
+        employeeId: "",
+        employeeName: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+    } catch (err) {
+      alert("Failed to reset password: " + err.response?.data?.message);
+      console.error("Error resetting password:", err);
+    }
+  };
+
+  const openResetPasswordModal = (user) => {
+    setResetPasswordData({
+      employeeId: user.employeeId,
+      employeeName: user.name,
+      newPassword: "",
+      confirmPassword: "",
+    });
+    setShowResetPassword(true);
   };
 
   const filteredUsers = users.filter((user) => {
@@ -212,6 +266,8 @@ const TeamsPage = () => {
         .actions button.edit:hover { background: #ebf8ff; }
         .actions button.delete { color: #e53e3e; }
         .actions button.delete:hover { background: #fff5f5; }
+        .actions button.password { color: #dd6b20; }
+        .actions button.password:hover { background: #feebc8; }
         .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
         .modal-content { background: white; padding: 24px; border-radius: 12px; width: 400px; max-width: 90vw; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
         .modal h2 { margin-top: 0; color: #1a202c; }
@@ -235,6 +291,7 @@ const TeamsPage = () => {
         .btn-delete-confirm:hover { background: #c53030; transform: translateY(-1px); box-shadow: 0 4px 6px rgba(229, 62, 62, 0.3); }
         .btn-cancel { background: #edf2f7; color: #4a5568; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.2s; }
         .btn-cancel:hover { background: #e2e8f0; transform: translateY(-1px); }
+        .password-hint { font-size: 12px; color: #718096; margin-top: 4px; }
       `}</style>
 
       <div className="page-header">
@@ -329,10 +386,17 @@ const TeamsPage = () => {
                         role: user.role || "Driver",
                         active:
                           user.status === "ACTIVE" || user.active === true,
+                        password: "",
                       });
                     }}
                   >
                     Edit
+                  </button>
+                  <button
+                    className="password"
+                    onClick={() => openResetPasswordModal(user)}
+                  >
+                    Reset Password
                   </button>
                   <button
                     className="delete"
@@ -406,6 +470,22 @@ const TeamsPage = () => {
               />
             </div>
 
+            {!editingUser && (
+              <div className="form-group">
+                <label>Password *</label>
+                <input
+                  name="password"
+                  type="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  placeholder="Minimum 6 characters"
+                  minLength={6}
+                  required
+                />
+                <p className="password-hint">Minimum 6 characters</p>
+              </div>
+            )}
+
             <div className="form-group">
               <label>Role</label>
               <select
@@ -446,11 +526,6 @@ const TeamsPage = () => {
               >
                 Cancel
               </button>
-              {/* <button className="btn-primary" onClick={handleSaveUser}>
-                {editingUser
-                  ? `Update ${editingUser.role}`
-                  : `Add ${formData.role}`}
-              </button> */}
               <button className="btn-primary" onClick={handleSaveUser}>
                 {editingUser ? "Update" : `Add ${formData.role}`}
               </button>
@@ -459,7 +534,84 @@ const TeamsPage = () => {
         </div>
       )}
 
-      {/* Enhanced Delete Confirmation Modal */}
+      {/* Reset Password Modal */}
+      {showResetPassword && (
+        <div
+          className="modal"
+          onClick={() => {
+            setShowResetPassword(false);
+            setResetPasswordData({
+              employeeId: "",
+              employeeName: "",
+              newPassword: "",
+              confirmPassword: "",
+            });
+          }}
+        >
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h2>Reset Password</h2>
+            <p style={{ color: "#4a5568", marginBottom: "20px" }}>
+              Reset password for:{" "}
+              <strong>{resetPasswordData.employeeName}</strong>
+            </p>
+
+            <div className="form-group">
+              <label>New Password *</label>
+              <input
+                type="password"
+                value={resetPasswordData.newPassword}
+                onChange={(e) =>
+                  setResetPasswordData({
+                    ...resetPasswordData,
+                    newPassword: e.target.value,
+                  })
+                }
+                placeholder="Minimum 6 characters"
+                minLength={6}
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Confirm Password *</label>
+              <input
+                type="password"
+                value={resetPasswordData.confirmPassword}
+                onChange={(e) =>
+                  setResetPasswordData({
+                    ...resetPasswordData,
+                    confirmPassword: e.target.value,
+                  })
+                }
+                placeholder="Re-enter password"
+                required
+              />
+            </div>
+
+            <div className="modal-buttons">
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setShowResetPassword(false);
+                  setResetPasswordData({
+                    employeeId: "",
+                    employeeName: "",
+                    newPassword: "",
+                    confirmPassword: "",
+                  });
+                }}
+              >
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleResetPassword}>
+                Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
       {confirmDelete && (
         <div className="modal" onClick={() => setConfirmDelete(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>

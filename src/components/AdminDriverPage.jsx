@@ -1,67 +1,95 @@
 // src/components/AdminDriverPage.jsx
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 const API_BASE_URL = "http://localhost:8080/api/employees";
+const ROUTES_API_URL = "http://localhost:8080/api/routes";
+const NOTIFICATIONS_API_URL = "http://localhost:8080/api/notifications";
 
 const AdminDriverPage = () => {
+  const navigate = useNavigate();
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
 
-  // Fetch drivers from backend
-  useEffect(() => {
-    const fetchDrivers = async () => {
-      try {
-        const response = await axios.get(API_BASE_URL);
-        const employees = response.data;
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [messageText, setMessageText] = useState("");
 
-        // Filter only drivers and map to driver format
-        const driverData = employees
-          .filter((emp) => emp.role?.toUpperCase() === "DRIVER")
-          .map((emp) => ({
+  // Fetch drivers and calculate real-time stats
+  useEffect(() => {
+    const fetchDriversData = async () => {
+      try {
+        setLoading(true);
+        const employeesResponse = await axios.get(API_BASE_URL);
+        const allEmployees = employeesResponse.data;
+        const routesResponse = await axios.get(ROUTES_API_URL);
+        const allRoutes = routesResponse.data;
+
+        const driverEmployees = allEmployees.filter(
+          (emp) => emp.role?.toUpperCase() === "DRIVER",
+        );
+
+        const driverData = driverEmployees.map((emp) => {
+          const activeRoute = allRoutes.find(
+            (route) =>
+              route.driverId === emp.employeeId &&
+              (route.status === "CREATED" || route.status === "IN_PROGRESS"),
+          );
+
+          const completedStops = activeRoute?.completedBinIds?.length || 0;
+          const totalStops = activeRoute?.totalStops || 0;
+          const efficiency =
+            totalStops > 0
+              ? Math.round((completedStops / totalStops) * 100)
+              : 0;
+          const collectionAmount = (completedStops * 0.5).toFixed(1);
+
+          return {
             id: emp.employeeId,
             name: `${emp.firstName} ${emp.lastName}`,
             status:
               emp.status === "ACTIVE" || emp.active ? "active" : "offline",
-            currentRoute: null,
-            // vehicle: `Truck #${Math.floor(Math.random() * 20) + 1}`,
-            // Deterministic vehicle assignment based on employeeId
+            currentRoute: activeRoute?.routeNumber || null,
             vehicle: `Truck #${(parseInt(emp.employeeId?.replace(/\D/g, "") || "0") % 20) + 1}`,
-            completedStops: Math.floor(Math.random() * 15),
-            totalStops: Math.floor(Math.random() * 20) + 10,
-            progress: 0,
-            location: emp.status === "ACTIVE" ? "On Route" : "Depot",
+            completedStops,
+            totalStops,
+            progress: totalStops > 0 ? (completedStops / totalStops) * 100 : 0,
+            location:
+              (emp.status === "ACTIVE" || emp.active) && activeRoute
+                ? "On Route"
+                : "Depot",
             phone: emp.phone || "N/A",
             email: emp.email,
             avatar: `${emp.firstName?.[0] || ""}${emp.lastName?.[0] || ""}`,
-            todayCollection: `${(Math.random() * 50).toFixed(1)} tons`,
-            efficiency: `${Math.floor(Math.random() * 15) + 85}%`,
-            lastUpdate: "Just now",
+            todayCollection: `${collectionAmount} tons`,
+            efficiency: `${efficiency}%`,
+            lastUpdate: activeRoute?.updatedAt
+              ? new Date(activeRoute.updatedAt).toLocaleTimeString()
+              : "Just now",
             employeeId: emp.employeeId,
             firstName: emp.firstName,
             lastName: emp.lastName,
-          }));
+            routeData: activeRoute,
+          };
+        });
 
         setDrivers(driverData);
         setLoading(false);
       } catch (err) {
-        console.error("Error fetching drivers:", err);
+        console.error("Error fetching drivers data:", err);
         setError("Failed to load drivers. Make sure backend is running.");
         setLoading(false);
       }
     };
 
-    fetchDrivers();
-
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchDrivers, 30000);
+    fetchDriversData();
+    const interval = setInterval(fetchDriversData, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Calculate stats
   const activeDrivers = drivers.filter((d) => d.status === "active").length;
   const totalCollection = drivers.reduce(
     (acc, d) => acc + parseFloat(d.todayCollection) || 0,
@@ -75,7 +103,6 @@ const AdminDriverPage = () => {
         )
       : 0;
 
-  // Filter drivers
   const filteredDrivers =
     filterStatus === "all"
       ? drivers
@@ -91,6 +118,37 @@ const AdminDriverPage = () => {
         return "status-offline";
       default:
         return "";
+    }
+  };
+
+  const handleViewRoute = (driverId) => {
+    navigate(`/driver-tracking/${driverId}`);
+  };
+
+  const handleContactDriver = () => {
+    if (!selectedDriver) return;
+    setMessageText("");
+    setShowMessageModal(true);
+  };
+
+  const handleSendMessage = async () => {
+    if (!messageText.trim() || !selectedDriver) return;
+
+    try {
+      await axios.post(NOTIFICATIONS_API_URL, {
+        title: "Message from Admin",
+        message: messageText,
+        driverId: selectedDriver.employeeId,
+        type: "INFO",
+        isRead: false,
+      });
+
+      alert("Message sent successfully!");
+      setShowMessageModal(false);
+      setMessageText("");
+    } catch (err) {
+      console.error("Error sending message:", err);
+      alert("Failed to send message. Ensure backend is running.");
     }
   };
 
@@ -133,27 +191,23 @@ const AdminDriverPage = () => {
           background-color: #f5f7fa;
           min-height: 100vh;
         }
-
-        .page-header {
+        .admin-driver-page .page-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
           margin-bottom: 24px;
         }
-
-        .page-title {
+        .admin-driver-page .page-title {
           font-size: 24px;
           font-weight: 600;
           color: #2d3748;
           margin: 0;
         }
-
-        .header-actions {
+        .admin-driver-page .header-actions {
           display: flex;
           gap: 12px;
         }
-
-        .btn-primary {
+        .admin-driver-page .btn-primary {
           background: #38a169;
           color: white;
           border: none;
@@ -163,77 +217,65 @@ const AdminDriverPage = () => {
           cursor: pointer;
           transition: all 0.2s;
         }
-
-        .btn-primary:hover {
+        .admin-driver-page .btn-primary:hover {  
           background: #2f855a;
         }
-
-        .btn-secondary {
+        .admin-driver-page .btn-secondary {
           background: white;
           color: #4a5568;
           border: 1px solid #e2e8f0;
-          padding: 10px 20px;
+          padding: 10px 20px; 
           border-radius: 6px;
           font-weight: 600;
           cursor: pointer;
           transition: all 0.2s;
         }
-
-        .btn-secondary:hover {
+        .admin-driver-page .btn-secondary:hover {
           background: #f8fafc;
         }
-
-        .stats-grid {
+        .admin-driver-page .stats-grid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           gap: 16px;
           margin-bottom: 24px;
         }
-
-        .stat-card {
+        .admin-driver-page .stat-card {
           background: white;
           border-radius: 8px;
           padding: 20px;
           box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
-
-        .stat-label {
+        .admin-driver-page .stat-label { 
           font-size: 14px;
           color: #4a5568;
           margin-bottom: 8px;
         }
-
-        .stat-value {
+        .admin-driver-page .stat-value {
           font-size: 28px;
           font-weight: 700;
           color: #1a202c;
         }
-
-        .stat-subtitle {
+        .admin-driver-page .stat-subtitle {
           font-size: 12px;
           color: #718096;
           margin-top: 4px;
         }
-
-        .filter-bar {
+        .admin-driver-page .filter-bar {
           display: flex;
           gap: 12px;
           margin-bottom: 20px;
           align-items: center;
         }
-
-        .filter-label {
+        .admin-driver-page .filter-label {
           font-size: 14px;
           color: #4a5568;
           font-weight: 500;
         }
-
-        .filter-buttons {
+        .admin-driver-page .filter-buttons {
           display: flex;
           gap: 8px;
         }
-
-        .filter-btn {
+        .admin-driver-page .filter-btn {
           padding: 8px 16px;
           border: 1px solid #e2e8f0;
           background: white;
@@ -242,24 +284,20 @@ const AdminDriverPage = () => {
           font-size: 14px;
           transition: all 0.2s;
         }
-
-        .filter-btn.active {
+        .admin-driver-page .filter-btn.active {
           background: #38a169;
           color: white;
           border-color: #38a169;
         }
-
-        .filter-btn:hover:not(.active) {
+        .admin-driver-page .filter-btn:hover:not(.active) {
           background: #f8fafc;
         }
-
-        .drivers-grid {
+        .admin-driver-page .drivers-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
           gap: 20px;
         }
-
-        .driver-card {
+        .admin-driver-page .driver-card {
           background: white;
           border-radius: 8px;
           padding: 20px;
@@ -268,30 +306,25 @@ const AdminDriverPage = () => {
           transition: all 0.2s;
           border: 2px solid transparent;
         }
-
-        .driver-card:hover {
+        .admin-driver-page .driver-card:hover {
           box-shadow: 0 4px 6px rgba(0,0,0,0.1);
           transform: translateY(-2px);
         }
-
-        .driver-card.selected {
+        .admin-driver-page .driver-card.selected {
           border-color: #38a169;
         }
-
-        .driver-header {
+        .admin-driver-page .driver-header {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
           margin-bottom: 16px;
         }
-
-        .driver-info {
+        .admin-driver-page .driver-info {
           display: flex;
           align-items: center;
           gap: 12px;
         }
-
-        .driver-avatar {
+        .admin-driver-page .driver-avatar {
           width: 48px;
           height: 48px;
           border-radius: 50%;
@@ -303,103 +336,86 @@ const AdminDriverPage = () => {
           align-items: center;
           justify-content: center;
         }
-
-        .driver-details h3 {
+        .admin-driver-page .driver-details h3 {
           margin: 0;
           font-size: 16px;
           color: #2d3748;
           font-weight: 600;
         }
-
-        .driver-id {
+        .admin-driver-page .driver-id {
           font-size: 13px;
           color: #718096;
           margin-top: 2px;
         }
-
-        .status-badge {
+        .admin-driver-page .status-badge {
           padding: 6px 12px;
           border-radius: 20px;
           font-size: 12px;
           font-weight: 600;
           text-transform: capitalize;
         }
-
-        .status-active {
+        .admin-driver-page .status-active {
           background: #c6f6d5;
           color: #38a169;
         }
-
-        .status-idle {
+        .admin-driver-page .status-idle {
           background: #e2e8f0;
           color: #4a5568;
         }
-
-        .status-offline {
+        .admin-driver-page .status-offline {
           background: #fed7d7;
           color: #e53e3e;
         }
-
-        .driver-stats {
+        .admin-driver-page .driver-stats {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
           gap: 12px;
           margin-bottom: 16px;
         }
-
-        .driver-stat {
+        .admin-driver-page .driver-stat {
           padding: 12px;
           background: #f8fafc;
           border-radius: 6px;
         }
-
-        .driver-stat-label {
+        .admin-driver-page .driver-stat-label {
           font-size: 12px;
           color: #718096;
           margin-bottom: 4px;
         }
-
-        .driver-stat-value {
+        .admin-driver-page .driver-stat-value { 
           font-size: 16px;
           font-weight: 600;
           color: #2d3748;
         }
-
-        .progress-section {
+        .admin-driver-page .progress-section {
           margin-bottom: 16px;
         }
-
-        .progress-header {
+        .admin-driver-page .progress-header {
           display: flex;
           justify-content: space-between;
           margin-bottom: 8px;
           font-size: 13px;
         }
-
-        .progress-label {
+        .admin-driver-page .progress-label {
           color: #4a5568;
         }
-
-        .progress-value {
+        .admin-driver-page .progress-value {
           color: #2d3748;
           font-weight: 600;
         }
-
-        .progress-bar {
+        .admin-driver-page .progress-bar {
           height: 8px;
           background: #edf2f7;
           border-radius: 4px;
           overflow: hidden;
         }
-
-        .progress-fill {
+        .admin-driver-page .progress-fill {
           height: 100%;
           background: #38a169;
           border-radius: 4px;
           transition: width 0.3s;
         }
-
-        .driver-footer {
+        .admin-driver-page .driver-footer {
           display: flex;
           justify-content: space-between;
           align-items: center;
@@ -407,19 +423,16 @@ const AdminDriverPage = () => {
           border-top: 1px solid #edf2f7;
           font-size: 13px;
         }
-
-        .driver-location {
+        .admin-driver-page .driver-location {
           color: #4a5568;
           display: flex;
           align-items: center;
           gap: 6px;
         }
-
-        .driver-time {
+        .admin-driver-page .driver-time {
           color: #718096;
         }
-
-        .driver-detail-modal {
+        .admin-driver-page .driver-detail-modal {
           position: fixed;
           top: 0;
           right: 0;
@@ -428,31 +441,27 @@ const AdminDriverPage = () => {
           background: white;
           box-shadow: -4px 0 12px rgba(0,0,0,0.1);
           z-index: 1000;
-          overflow-y: auto;
+          overflow-y: auto; 
           transform: translateX(100%);
           transition: transform 0.3s;
         }
-
-        .driver-detail-modal.open {
+        .admin-driver-page .driver-detail-modal.open {
           transform: translateX(0);
         }
-
-        .modal-header {
+        .admin-driver-page .modal-header {
           padding: 24px;
           border-bottom: 1px solid #edf2f7;
           display: flex;
           justify-content: space-between;
           align-items: center;
         }
-
-        .modal-title {
+        .admin-driver-page .modal-title {
           font-size: 20px;
           font-weight: 600;
           color: #2d3748;
           margin: 0;
         }
-
-        .close-btn {
+        .admin-driver-page .close-btn {
           background: none;
           border: none;
           font-size: 24px;
@@ -466,21 +475,17 @@ const AdminDriverPage = () => {
           justify-content: center;
           transition: all 0.2s;
         }
-
-        .close-btn:hover {
+        .admin-driver-page .close-btn:hover {
           background: #f8fafc;
           color: #2d3748;
         }
-
-        .modal-body {
+        .admin-driver-page .modal-body {
           padding: 24px;
         }
-
-        .detail-section {
+        .admin-driver-page .detail-section {
           margin-bottom: 28px;
         }
-
-        .section-title {
+        .admin-driver-page .section-title {
           font-size: 14px;
           font-weight: 600;
           color: #4a5568;
@@ -488,32 +493,27 @@ const AdminDriverPage = () => {
           text-transform: uppercase;
           letter-spacing: 0.5px;
         }
-
-        .detail-row {
+        .admin-driver-page .detail-row {
           display: flex;
           justify-content: space-between;
           padding: 12px 0;
           border-bottom: 1px solid #f8fafc;
         }
-
-        .detail-label {
+        .admin-driver-page .detail-label {
           color: #718096;
           font-size: 14px;
         }
-
-        .detail-value {
+        .admin-driver-page .detail-value {
           color: #2d3748;
           font-weight: 500;
           font-size: 14px;
         }
-
-        .action-buttons {
+        .admin-driver-page .action-buttons {
           display: flex;
           gap: 12px;
           margin-top: 24px;
         }
-
-        .action-btn {
+        .admin-driver-page .action-btn {
           flex: 1;
           padding: 12px;
           border: none;
@@ -522,26 +522,21 @@ const AdminDriverPage = () => {
           cursor: pointer;
           transition: all 0.2s;
         }
-
-        .btn-view-route {
+        .admin-driver-page .btn-view-route {
           background: #38a169;
           color: white;
         }
-
-        .btn-view-route:hover {
+        .admin-driver-page .btn-view-route:hover {
           background: #2f855a;
         }
-
-        .btn-contact {
+        .admin-driver-page .btn-contact {
           background: #3182ce;
           color: white;
         }
-
-        .btn-contact:hover {
+        .admin-driver-page .btn-contact:hover {
           background: #2c5282;
         }
-
-        .overlay {
+        .admin-driver-page .overlay {
           position: fixed;
           top: 0;
           left: 0;
@@ -553,14 +548,12 @@ const AdminDriverPage = () => {
           visibility: hidden;
           transition: all 0.3s;
         }
-
-        .overlay.show {
+        .admin-driver-page .overlay.show {
           opacity: 1;
           visibility: visible;
         }
-
-        .no-drivers {
-          grid-column: 1 / -1; /* Span all columns */
+        .admin-driver-page .no-drivers {
+          grid-column: 1 / -1;
           text-align: center;
           padding: 120px 20px;
           color: #718096;
@@ -569,13 +562,50 @@ const AdminDriverPage = () => {
           align-items: center;
           justify-content: center;
           min-height: 500px;
-          width: 100%
+          width: 100%;
         }
-
-        .no-drivers-icon {
+        .admin-driver-page .no-drivers-icon {
           font-size: 80px;
           margin-bottom: 24px;
           opacity: 0.5;
+        }
+        /* ✅ New Styles for Centered Message Modal */
+        .admin-driver-page .message-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.5);
+          z-index: 2000; /* Higher than side modal */
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .admin-driver-page .message-modal-content {
+          background: white;
+          padding: 24px;
+          border-radius: 12px;
+          width: 90%;
+          max-width: 500px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .admin-driver-page .message-textarea {
+          width: 100%;
+          padding: 12px;
+          border: 1px solid #cbd5e0;
+          border-radius: 6px;
+          font-size: 14px;
+          minHeight: 120px;
+          box-sizing: border-box;
+          margin-bottom: 16px;
+          font-family: inherit;
+          resize: vertical;
+        }
+        .admin-driver-page .message-textarea:focus {
+          outline: none;
+          border-color: #38a169;
+          box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.1);
         }
       `}</style>
 
@@ -725,7 +755,9 @@ const AdminDriverPage = () => {
                 <div className="progress-section">
                   <div className="progress-header">
                     <span className="progress-label">Route Progress</span>
-                    <span className="progress-value">{driver.progress}%</span>
+                    <span className="progress-value">
+                      {Math.round(driver.progress)}%
+                    </span>
                   </div>
                   <div className="progress-bar">
                     <div
@@ -754,7 +786,7 @@ const AdminDriverPage = () => {
         )}
       </div>
 
-      {/* Driver Detail Modal */}
+      {/* Driver Detail Modal (Side Panel) */}
       <div
         className={`overlay ${selectedDriver ? "show" : ""}`}
         onClick={() => setSelectedDriver(null)}
@@ -847,10 +879,17 @@ const AdminDriverPage = () => {
 
               {/* Action Buttons */}
               <div className="action-buttons">
-                <button className="action-btn btn-view-route">
+                <button
+                  className="action-btn btn-view-route"
+                  onClick={() => handleViewRoute(selectedDriver.id)}
+                >
                   View Live Route
                 </button>
-                <button className="action-btn btn-contact">
+                {/* ✅ Updated to open centered modal */}
+                <button
+                  className="action-btn btn-contact"
+                  onClick={handleContactDriver}
+                >
                   Contact Driver
                 </button>
               </div>
@@ -858,6 +897,50 @@ const AdminDriverPage = () => {
           </>
         )}
       </div>
+
+      {/* ✅ New Centered Message Modal */}
+      {showMessageModal && (
+        <div className="message-modal-overlay">
+          <div
+            className="message-modal-content"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              style={{ marginTop: 0, marginBottom: "16px", color: "#2d3748" }}
+            >
+              Message to {selectedDriver?.name}
+            </h3>
+            <textarea
+              className="message-textarea"
+              placeholder="Type your message here (e.g., 'Return to depot', 'Check bin #12')..."
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+            />
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                className="btn-secondary"
+                onClick={() => setShowMessageModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleSendMessage}
+                disabled={!messageText.trim()}
+                style={{ opacity: !messageText.trim() ? 0.6 : 1 }}
+              >
+                Send Message
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

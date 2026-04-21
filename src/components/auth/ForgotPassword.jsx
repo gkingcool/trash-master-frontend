@@ -1,6 +1,7 @@
 // src/components/auth/ForgotPassword.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
 import "./login.css";
 import logo from "../../assets/icons/recycling-icon.png";
 import truck from "../../assets/icons/truck.png";
@@ -17,14 +18,37 @@ const ForgotPassword = () => {
     setLoading(true);
     setError("");
 
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError("Please enter a valid email address");
+      setLoading(false);
+      return;
+    }
+
     try {
-      // TODO: Call backend API when ready
-      // await axios.post("http://localhost:8080/api/auth/forgot-password", { email });
+      // ✅ Call backend API
+      const response = await axios.post(
+        "http://localhost:8080/api/auth/forgot-password",
+        { email: email.trim() },
+      );
 
-      // For demo - simulate success
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      setSuccess(true);
+      if (response.data.success) {
+        // ✅ Check if backend returned a token (development mode)
+        if (response.data.token) {
+          setSuccess(true);
+          // Show token in alert for easy copying
+          alert(
+            `🔧 Development Mode\n\n` +
+              `Reset Token: ${response.data.token}\n\n` +
+              `Reset URL:\n${response.data.resetUrl}\n\n` +
+              `Copy the URL and paste it in your browser to test.`,
+          );
+        } else {
+          setSuccess(true);
+        }
+        setEmail("");
+      }
     } catch (err) {
       setError(
         err.response?.data?.message ||
@@ -41,11 +65,13 @@ const ForgotPassword = () => {
         <div className="left-panel">
           <img src={truck} alt="truck" className="truck-image" />
         </div>
+
         <div className="right-panel">
           <div className="header">
             <img src={logo} alt="Logo" className="logo-icon" />
             <h1>Trash Master Co.</h1>
           </div>
+
           <div className="form-container">
             <div className="login-form" style={{ textAlign: "center" }}>
               <div style={{ fontSize: "48px", marginBottom: "16px" }}>✅</div>
@@ -53,6 +79,7 @@ const ForgotPassword = () => {
               <p style={{ color: "#666", marginBottom: "24px" }}>
                 We've sent a password reset link to <strong>{email}</strong>
               </p>
+
               <button
                 className="login-button"
                 onClick={() => navigate("/login")}
@@ -60,6 +87,7 @@ const ForgotPassword = () => {
               >
                 Back to Login
               </button>
+
               <p style={{ fontSize: "13px", color: "#999" }}>
                 Didn't receive the email?{" "}
                 <button
@@ -70,6 +98,8 @@ const ForgotPassword = () => {
                     border: "none",
                     color: "#38a169",
                     cursor: "pointer",
+                    padding: "0",
+                    fontSize: "13px",
                   }}
                 >
                   Try again
@@ -87,11 +117,13 @@ const ForgotPassword = () => {
       <div className="left-panel">
         <img src={truck} alt="truck" className="truck-image" />
       </div>
+
       <div className="right-panel">
         <div className="header">
           <img src={logo} alt="Logo" className="logo-icon" />
           <h1>Trash Master Co.</h1>
         </div>
+
         <div className="form-container">
           <div className="login-form">
             <h2>Forgot Password?</h2>
@@ -116,8 +148,9 @@ const ForgotPassword = () => {
                   id="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Enter your email"
+                  placeholder="Enter your work email"
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -126,18 +159,7 @@ const ForgotPassword = () => {
               </button>
             </form>
 
-            <button
-              className="link-button"
-              onClick={() => navigate("/login")}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#38a169",
-                cursor: "pointer",
-                marginTop: "16px",
-                fontSize: "14px",
-              }}
-            >
+            <button className="link-button" onClick={() => navigate("/login")}>
               ← Back to Login
             </button>
           </div>
