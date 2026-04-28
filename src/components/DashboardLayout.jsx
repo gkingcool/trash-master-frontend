@@ -12,8 +12,7 @@ import settingsIcon from "../assets/icons/settings.png";
 import logoIcon from "../assets/icons/recycling-icon.png";
 import bellIcon from "../assets/icons/bell-icon.png";
 import binsIcon from "../assets/icons/bins.png";
-
-// ✅ Helper to get current logged-in user info
+import trucksIcon from "../assets/icons/trucks-icon.png";
 const getCurrentUser = () => {
   try {
     const auth = JSON.parse(localStorage.getItem("auth"));
@@ -37,7 +36,6 @@ const getCurrentUser = () => {
 
 export default function DashboardLayout() {
   const location = useLocation();
-
   // ✅ Get current user
   const user = getCurrentUser();
 
@@ -51,10 +49,14 @@ export default function DashboardLayout() {
 
   const getPageTitle = () => {
     const titles = {
+      "/dashboard": "Dashboard",
       "/route-planner": "Admin Route Planner",
       "/teams": "Team Management",
       "/bins": "Bin Management",
       "/drivers": "Driver Management",
+      "/trucks": "Fleet Management",
+      "/route-status": "Route Status",
+      "/deployments": "Deployments",
       "/settings": "Settings",
     };
     return titles[location.pathname] || "Dashboard";
@@ -63,154 +65,27 @@ export default function DashboardLayout() {
   return (
     <div className="dashboard-layout">
       <style>{`
-        .dashboard-layout {
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          display: flex;
-          height: 100vh;
-          background-color: #f5f7fa;
-        }
-        .sidebar {
-          width: 240px;
-          background: white;
-          border-right: 1px solid #e0e6ed;
-          padding: 20px 0;
-          display: flex;
-          flex-direction: column;
-        }
-        .sidebar-header {
-          padding: 0 20px 20px;
-          font-weight: 600;
-          font-size: 16px;
-          color: #4a5568;
-          border-bottom: 1px solid #edf2f7;
-          margin-bottom: 15px;
-          display: flex;
-          align-items: center;
-        }
-        .sidebar-header img {
-          width: 24px;
-          height: 24px;
-          margin-right: 10px;
-          object-fit: contain;
-        }
-        .sidebar-nav ul {
-          list-style: none;
-          padding: 0 10px;
-          margin: 0;
-        }
-        .nav-link {
-          display: flex;
-          align-items: center;
-          padding: 12px 20px;
-          margin: 5px 0;
-          text-decoration: none;
-          color: #4a5568;
-          border-left: 4px solid transparent;
-        }
-        .nav-link:hover {
-          background-color: #f8fafc;
-        }
-        .nav-link.active {
-          background-color: #edf2f7;
-          border-left: 4px solid #38A169;
-          font-weight: 600;
-          color: #2d3748;
-        }
-        .nav-link img {
-          width: 20px;
-          height: 20px;
-          margin-right: 12px;
-          object-fit: contain;
-        }
-        .main-area {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-        .top-bar {
-          padding: 15px 25px;
-          background: white;
-          border-bottom: 1px solid #edf2f7;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .top-bar h1 {
-          font-size: 20px;
-          font-weight: 600;
-          color: #2d3748;
-        }
-        .header-actions {
-          display: flex;
-          gap: 16px;
-          align-items: center;
-        }
-        .btn-icon {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .btn-icon img {
-          width: 16px;
-          height: 16px;
-          object-fit: contain;
-        }
-        .btn-icon:hover {
-          background: #edf2f7;
-        }
-        /* ✅ Added hover effect */
-        .user-avatar-container {
-          position: relative;
-          display: inline-block;
-        }
-        .user-avatar {
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          background-color: #38A169;
-          color: white;
-          font-weight: 600;
-          font-size: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          border: none;
-        }
-        .logout-tooltip {
-          position: absolute;
-          bottom: -32px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: #1a202c;
-          color: white;
-          padding: 4px 8px;
-          border-radius: 4px;
-          font-size: 12px;
-          white-space: nowrap;
-          opacity: 0;
-          visibility: hidden;
-          transition: opacity 0.2s, visibility 0.2s;
-          pointer-events: none;
-          z-index: 10;
-        }
-        .user-avatar-container:hover .logout-tooltip {
-          opacity: 1;
-          visibility: visible;
-        }
-        .content-wrapper {
-          flex: 1;
-          overflow-y: auto;
-          padding: 0;
-        }
+        .dashboard-layout { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background-color: #f5f7fa; } 
+        .sidebar { width: 240px; background: white; border-right: 1px solid #e0e6ed; padding: 20px 0; display: flex; flex-direction: column; } 
+        .sidebar-header { padding: 0 20px 20px; font-weight: 600; font-size: 16px; color: #4a5568; border-bottom: 1px solid #edf2f7; margin-bottom: 15px; display: flex; align-items: center; } 
+        .sidebar-header img { width: 24px; height: 24px; margin-right: 10px; object-fit: contain; } 
+        .sidebar-nav ul { list-style: none; padding: 0 10px; margin: 0; } 
+        .nav-link { display: flex; align-items: center; padding: 12px 20px; margin: 5px 0; text-decoration: none; color: #4a5568; border-left: 4px solid transparent; transition: all 0.2s; } 
+        .nav-link:hover { background-color: #f8fafc; } 
+        .nav-link.active { background-color: #edf2f7; border-left: 4px solid #38A169; font-weight: 600; color: #2d3748; } 
+        .nav-link img { width: 20px; height: 20px; margin-right: 12px; object-fit: contain; } 
+        .main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; } 
+        .top-bar { padding: 15px 25px; background: white; border-bottom: 1px solid #edf2f7; display: flex; justify-content: space-between; align-items: center; } 
+        .top-bar h1 { font-size: 20px; font-weight: 600; color: #2d3748; } 
+        .header-actions { display: flex; gap: 16px; align-items: center; } 
+        .btn-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: #f8fafc; border: 1px solid #e2e8f0; cursor: pointer; transition: all 0.2s; } 
+        .btn-icon img { width: 16px; height: 16px; object-fit: contain; } 
+        .btn-icon:hover { background: #edf2f7; } 
+        .user-avatar-container { position: relative; display: inline-block; } 
+        .user-avatar { width: 36px; height: 36px; border-radius: 50%; background-color: #38A169; color: white; font-weight: 600; font-size: 12px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; } 
+        .logout-tooltip { position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%); background: #1a202c; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s; pointer-events: none; z-index: 10; } 
+        .user-avatar-container:hover .logout-tooltip { opacity: 1; visibility: visible; } 
+        .content-wrapper { flex: 1; overflow-y: auto; padding: 0; }
       `}</style>
 
       <aside className="sidebar">
@@ -238,6 +113,19 @@ export default function DashboardLayout() {
                 <span>Drivers</span>
               </Link>
             </li>
+
+            {/* ✅ NEW: Fleet/Trucks Link */}
+            <li>
+              <Link
+                to="/trucks"
+                className={`nav-link ${isActive("/trucks") ? "active" : ""}`}
+              >
+                {/* If you don't have a truck icon yet, you can use driversIcon temporarily or find a free SVG */}
+                <img src={trucksIcon || driversIcon} alt="Fleet" />
+                <span>Fleet</span>
+              </Link>
+            </li>
+
             <li>
               <Link
                 to="/route-planner"
@@ -300,10 +188,6 @@ export default function DashboardLayout() {
         <header className="top-bar">
           <h1>{getPageTitle()}</h1>
           <div className="header-actions">
-            {/* Bell Icon - Add notification functionality if needed */}
-            {/*  <button className="btn-icon" aria-label="Notifications">
-              <img src={bellIcon} alt="Notifications" />
-            </button> */}
             <Notifications />
 
             {/* ✅ Dynamic User Avatar with Initials */}

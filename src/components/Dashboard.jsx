@@ -52,9 +52,19 @@ const WASHINGTON_BOUNDS = [
   [45.5435, -124.7631],
   [49.0024, -116.9165],
 ];
-
 const WASHINGTON_CENTER = [47.7511, -120.7401];
 const WASHINGTON_ZOOM = 7;
+
+// ✅ Helper to safely extract coordinates from either flat or nested structure
+const getBinCoordinates = (bin) => {
+  if (bin.latitude != null && bin.longitude != null) {
+    return [bin.latitude, bin.longitude];
+  }
+  if (bin.location && bin.location.lat != null && bin.location.lon != null) {
+    return [bin.location.lat, bin.location.lon];
+  }
+  return null;
+};
 
 // ✅ Map Controller - Auto-zoom to new bin + Double-click with fade animation
 function MapController({ bins }) {
@@ -65,9 +75,9 @@ function MapController({ bins }) {
   useEffect(() => {
     if (bins.length > previousBinCount.current && bins.length > 0) {
       const latestBin = bins[bins.length - 1];
-      if (latestBin.latitude && latestBin.longitude) {
-        // ✅ Direct setView - NO animation
-        map.setView([latestBin.latitude, latestBin.longitude], 15);
+      const coords = getBinCoordinates(latestBin);
+      if (coords) {
+        map.setView(coords, 15);
       }
     }
     previousBinCount.current = bins.length;
@@ -76,31 +86,26 @@ function MapController({ bins }) {
   // ✅ Double-click to zoom out with FADE animation
   useEffect(() => {
     const handleDoubleClick = () => {
-      // Add fade effect to map container
       const mapContainer = document.querySelector(".leaflet-container");
       if (mapContainer) {
         mapContainer.style.transition = "opacity 0.5s ease";
         mapContainer.style.opacity = "0.3";
 
-        // Zoom out to show all bins
         if (bins.length === 0) {
           map.setView(WASHINGTON_CENTER, WASHINGTON_ZOOM);
         } else if (bins.length === 1) {
-          map.setView([bins[0].latitude, bins[0].longitude], 13);
+          const coords = getBinCoordinates(bins[0]);
+          if (coords) map.setView(coords, 13);
         } else {
           const binCoordinates = bins
-            .filter((bin) => bin.latitude && bin.longitude)
-            .map((bin) => [bin.latitude, bin.longitude]);
-
+            .map(getBinCoordinates)
+            .filter((c) => c !== null);
           if (binCoordinates.length > 0) {
             const bounds = L.latLngBounds(binCoordinates);
-            map.fitBounds(bounds, {
-              padding: [50, 50],
-            });
+            map.fitBounds(bounds, { padding: [50, 50] });
           }
         }
 
-        // Fade back in after zoom
         setTimeout(() => {
           mapContainer.style.opacity = "1";
         }, 100);
@@ -108,7 +113,6 @@ function MapController({ bins }) {
     };
 
     map.on("dblclick", handleDoubleClick);
-
     return () => {
       map.off("dblclick", handleDoubleClick);
     };
@@ -120,7 +124,6 @@ function MapController({ bins }) {
 const Dashboard = () => {
   const [bins, setBins] = useState([]);
   const [binsLoading, setBinsLoading] = useState(true);
-
   const [kpis, setKpis] = useState([
     {
       title: "Total Waste Collected",
@@ -143,7 +146,7 @@ const Dashboard = () => {
     {
       title: "Average Fill Level",
       value: "0%",
-      unit: " ",
+      unit: "",
       trend: "stable",
       color: "#3182ce",
       progress: { actual: 0, total: 100 },
@@ -152,7 +155,7 @@ const Dashboard = () => {
     {
       title: "Routes Overview",
       value: "0%",
-      unit: " ",
+      unit: "",
       trend: "up",
       color: "#38a169",
       progress: { actual: 0, total: 100 },
@@ -170,7 +173,7 @@ const Dashboard = () => {
     {
       title: "Segregation Rate",
       value: "0%",
-      unit: " ",
+      unit: "",
       trend: "up",
       color: "#38a169",
       progress: { actual: 0, total: 100 },
@@ -186,7 +189,6 @@ const Dashboard = () => {
       subtitle: "In kWh",
     },
   ]);
-
   const [barData, setBarData] = useState({
     labels: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
     datasets: [
@@ -201,7 +203,6 @@ const Dashboard = () => {
       },
     ],
   });
-
   const [lineData, setLineData] = useState({
     labels: ["9", "10", "11", "12", "13", "14", "15", "16", "17"],
     datasets: [
@@ -217,7 +218,6 @@ const Dashboard = () => {
       },
     ],
   });
-
   const [ticketLog, setTicketLog] = useState([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
 
@@ -234,7 +234,6 @@ const Dashboard = () => {
       x: { grid: { display: false }, ticks: { color: "#4a5568" } },
     },
   };
-
   const lineOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -257,11 +256,9 @@ const Dashboard = () => {
     date: 110,
     status: 120,
   });
-
   const [isResizing, setIsResizing] = useState(null);
   const [resizeStart, setResizeStart] = useState({ x: 0, width: 0 });
   const resizeRef = useRef(null);
-
   const columns = [
     { key: "id", label: "ID" },
     { key: "description", label: "Description" },
@@ -274,27 +271,22 @@ const Dashboard = () => {
   // ✅ Calculate KPIs from Bin Data
   const calculateStatistics = (binsData) => {
     if (!binsData || binsData.length === 0) return;
-
     const totalBins = binsData.length;
-
-    const totalWasteCollected = binsData.reduce((acc, bin) => {
-      const binVolume = ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100;
-      return acc + binVolume;
-    }, 0);
-
+    const totalWasteCollected = binsData.reduce(
+      (acc, bin) => acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100,
+      0,
+    );
     const uncollectedWaste = binsData
       .filter((bin) => bin.fillLevel >= 70 && !bin.isFlagged)
-      .reduce((acc, bin) => {
-        const binVolume = ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100;
-        return acc + binVolume;
-      }, 0);
-
+      .reduce(
+        (acc, bin) => acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100,
+        0,
+      );
     const avgFillLevel =
       totalBins > 0
         ? binsData.reduce((acc, bin) => acc + (bin.fillLevel || 0), 0) /
           totalBins
         : 0;
-
     const binsNeedingCollection = binsData.filter(
       (bin) => bin.fillLevel >= 70,
     ).length;
@@ -302,9 +294,7 @@ const Dashboard = () => {
     const routesInUse = Math.ceil(binsNeedingCollection / 15);
     const routesOverview =
       totalRoutes > 0 ? (routesInUse / totalRoutes) * 100 : 0;
-
     const carbonFootprint = (totalWasteCollected / 1000) * 0.5;
-
     const recyclingBins = binsData.filter(
       (bin) =>
         bin.locationName?.toLowerCase().includes("recycle") ||
@@ -312,7 +302,6 @@ const Dashboard = () => {
     ).length;
     const segregationRate =
       totalBins > 0 ? (recyclingBins / totalBins) * 100 : 33;
-
     const electricityGenerated = (totalWasteCollected / 100) * 0.5;
 
     setKpis([
@@ -337,7 +326,7 @@ const Dashboard = () => {
       {
         title: "Average Fill Level",
         value: `${avgFillLevel.toFixed(0)}%`,
-        unit: " ",
+        unit: "",
         trend: avgFillLevel > 70 ? "down" : avgFillLevel < 30 ? "up" : "stable",
         color: "#3182ce",
         progress: { actual: avgFillLevel, total: 100 },
@@ -346,7 +335,7 @@ const Dashboard = () => {
       {
         title: "Routes Overview",
         value: `${routesOverview.toFixed(0)}%`,
-        unit: " ",
+        unit: "",
         trend: "up",
         color: "#38a169",
         progress: { actual: routesOverview, total: 100 },
@@ -364,7 +353,7 @@ const Dashboard = () => {
       {
         title: "Segregation Rate",
         value: `${segregationRate.toFixed(0)}%`,
-        unit: " ",
+        unit: "",
         trend: "up",
         color: "#38a169",
         progress: { actual: segregationRate, total: 100 },
@@ -380,20 +369,18 @@ const Dashboard = () => {
         subtitle: "In kWh",
       },
     ]);
-
     calculateChartData(binsData);
   };
 
   const calculateChartData = (binsData) => {
-    const totalWaste = binsData.reduce((acc, bin) => {
-      return acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100;
-    }, 0);
-
+    const totalWaste = binsData.reduce(
+      (acc, bin) => acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100,
+      0,
+    );
     const monthlyRevenue = Array.from({ length: 12 }, (_, i) => {
       const variation = 0.7 + Math.sin(i * 0.5) * 0.3;
       return Math.round(totalWaste * 0.05 * variation * 10) / 10;
     });
-
     setBarData({
       labels: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
       datasets: [
@@ -408,13 +395,11 @@ const Dashboard = () => {
         },
       ],
     });
-
     const hourlyWaste = Array.from({ length: 9 }, (_, i) => {
       const hour = i + 9;
       const peakFactor = 1 - Math.pow((hour - 13) / 5, 2);
       return Math.round(totalWaste * 0.1 * peakFactor * 10) / 10;
     });
-
     setLineData({
       labels: ["9", "10", "11", "12", "13", "14", "15", "16", "17"],
       datasets: [
@@ -432,15 +417,11 @@ const Dashboard = () => {
     });
   };
 
-  // Inside Dashboard.jsx, replace your fetchTickets function with this:
-
   const fetchTickets = async () => {
     try {
       const response = await axios.get(
         "http://localhost:8080/api/notifications",
       );
-
-      // ✅ FIX: Check if data exists and is an array to prevent crashes on null response
       const notifications = response.data;
       if (!Array.isArray(notifications)) {
         console.warn(
@@ -450,7 +431,6 @@ const Dashboard = () => {
         setTicketsLoading(false);
         return;
       }
-
       const tickets = notifications.map((notif) => ({
         id: notif.id,
         desc: notif.message || notif.title || "No description",
@@ -461,12 +441,10 @@ const Dashboard = () => {
           : "N/A",
         status: notif.status || "Under Review",
       }));
-
       setTicketLog(tickets);
       setTicketsLoading(false);
     } catch (err) {
-      console.error("Error fetching tickets: ", err);
-
+      console.error("Error fetching tickets:", err);
       setTicketsLoading(false);
     }
   };
@@ -477,7 +455,6 @@ const Dashboard = () => {
         `http://localhost:8080/api/notifications/${ticketId}/status`,
         { status: newStatus },
       );
-
       setTicketLog(
         ticketLog.map((ticket) =>
           ticket.id === ticketId
@@ -489,7 +466,6 @@ const Dashboard = () => {
             : ticket,
         ),
       );
-
       console.log(`Ticket ${ticketId} status updated to ${newStatus}`);
     } catch (err) {
       console.error("Error updating ticket status:", err);
@@ -497,7 +473,6 @@ const Dashboard = () => {
     }
   };
 
-  // ✅ Fetch bins from backend
   useEffect(() => {
     const fetchBins = async () => {
       try {
@@ -511,15 +486,12 @@ const Dashboard = () => {
         setBinsLoading(false);
       }
     };
-
     fetchBins();
     fetchTickets();
-
     const interval = setInterval(() => {
       fetchBins();
       fetchTickets();
     }, 30000);
-
     return () => clearInterval(interval);
   }, []);
 
@@ -539,7 +511,6 @@ const Dashboard = () => {
     setResizeStart({ x: e.clientX, width: colWidth });
     setIsResizing(index);
   };
-
   const handleResizeMove = (e) => {
     if (isResizing === null) return;
     const dx = e.clientX - resizeStart.x;
@@ -548,7 +519,6 @@ const Dashboard = () => {
     const newWidths = { ...columnWidths, [colKey]: newWidth };
     setColumnWidths(newWidths);
   };
-
   const handleResizeEnd = () => {
     setIsResizing(null);
     document.body.style.cursor = "default";
@@ -592,9 +562,55 @@ const Dashboard = () => {
       className="dashboard-page"
       style={{ backgroundColor: "white", minHeight: "100vh", padding: "20px" }}
     >
-      {
-        <style>{`.dashboard-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; } .kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 15px; margin-bottom: 20px; } .kpi-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; position: relative; } .kpi-title { font-size: 14px; color: #4a5568; margin-bottom: 8px; } .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; color: #1a202c; } .kpi-unit { font-size: 14px; color: #4a5568; margin-top: 4px; } .kpi-subtext { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.4; min-height: 30px; } .kpi-progress { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin-top: auto; position: relative; width: 100%; } .kpi-progress-bar { height: 100%; border-radius: 4px; position: relative; transition: width 0.3s ease; } .kpi-progress-value { position: absolute; right: 0; top: -22px; font-size: 12px; color: #4a5568; } .map-container { background: #2d3748; border-radius: 8px; height: 350px; margin-bottom: 20px; position: relative; overflow: hidden; } .map-legend { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; } .legend-item { background: rgba(255,255,255,0.9); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); } .legend-dot { width: 8px; height: 8px; border-radius: 50%; } .legend-gray { background: #718096; } .legend-green { background: #38a169; } .legend-orange { background: #dd6b20; } .legend-red { background: #e53e3e; } .map-scale { position: absolute; bottom: 20px; left: 20px; font-size: 12px; color: #cbd5e1; z-index: 1000; } .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; } .ticket-log { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); } .ticket-log-header { padding: 16px; border-bottom: 1px solid #edf2f7; font-weight: 600; font-size: 18px; color: #2d3748; } .ticket-log-table { width: 100%; border-collapse: collapse; overflow-y: auto; max-height: 400px; } .ticket-log-table th { padding: 12px 16px; text-align: left; font-weight: 600; color: #4a5568; font-size: 14px; border-bottom: 1px solid #edf2f7; position: relative; min-width: 50px; } .ticket-log-table th .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; cursor: col-resize; z-index: 10; } .ticket-log-table th:hover .resize-handle { background: #cbd5e0; } .ticket-log-table td { padding: 12px 16px; font-size: 13px; color: #2d3748; border-bottom: 1px solid #edf2f7; white-space: normal; word-break: break-word; } .ticket-log-table tr:last-child td { border-bottom: none; } .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; } .status-badge:hover { opacity: 0.8; } .status-under-review { background: #fed7d7; color: #e53e3e; } .status-in-progress { background: #bee3f8; color: #3182ce; } .status-resolved { background: #c6f6d5; color: #38a169; } .status-pending { background: #feebc8; color: #dd6b20; } .chart-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; } .chart-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 12px; } .chart-container { height: 200px; } .stats-footer { display: flex; justify-content: space-between; background: white; border-radius: 8px; padding: 16px; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); } .stat-box { text-align: center; flex: 1; } .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 4px; } .stat-value { font-size: 24px; font-weight: 700; color: #1a202c; } .stat-resolved { color: #38a169; } .stat-under-review { color: #e53e3e; } .leaflet-container { background: #2d3748; border-radius: 8px; } .status-dropdown { padding: 4px 8px; border-radius: 4px; border: 1px solid #cbd5e0; font-size: 12px; font-weight: 500; cursor: pointer; background: white; transition: all 0.2s; } .status-dropdown:hover { border-color: #38a169; } .status-dropdown option { padding: 8px; }`}</style>
-      }
+      <style>{`
+        .dashboard-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 15px; margin-bottom: 20px; }
+        .kpi-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; position: relative; }
+        .kpi-title { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
+        .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; color: #1a202c; }
+        .kpi-unit { font-size: 14px; color: #4a5568; margin-top: 4px; }
+        .kpi-subtext { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.4; min-height: 30px; }
+        .kpi-progress { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin-top: auto; position: relative; width: 100%; }
+        .kpi-progress-bar { height: 100%; border-radius: 4px; position: relative; transition: width 0.3s ease; }
+        .kpi-progress-value { position: absolute; right: 0; top: -22px; font-size: 12px; color: #4a5568; }
+        .map-container { background: #2d3748; border-radius: 8px; height: 350px; margin-bottom: 20px; position: relative; overflow: hidden; }
+        .map-legend { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
+        .legend-item { background: rgba(255,255,255,0.9); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .legend-gray { background: #718096; }
+        .legend-green { background: #38a169; }
+        .legend-orange { background: #dd6b20; }
+        .legend-red { background: #e53e3e; }
+        .map-scale { position: absolute; bottom: 20px; left: 20px; font-size: 12px; color: #cbd5e1; z-index: 1000; }
+        .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .ticket-log { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .ticket-log-header { padding: 16px; border-bottom: 1px solid #edf2f7; font-weight: 600; font-size: 18px; color: #2d3748; }
+        .ticket-log-table { width: 100%; border-collapse: collapse; overflow-y: auto; max-height: 400px; }
+        .ticket-log-table th { padding: 12px 16px; text-align: left; font-weight: 600; color: #4a5568; font-size: 14px; border-bottom: 1px solid #edf2f7; position: relative; min-width: 50px; }
+        .ticket-log-table th .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; cursor: col-resize; z-index: 10; }
+        .ticket-log-table th:hover .resize-handle { background: #cbd5e0; }
+        .ticket-log-table td { padding: 12px 16px; font-size: 13px; color: #2d3748; border-bottom: 1px solid #edf2f7; white-space: normal; word-break: break-word; }
+        .ticket-log-table tr:last-child td { border-bottom: none; }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
+        .status-badge:hover { opacity: 0.8; }
+        .status-under-review { background: #fed7d7; color: #e53e3e; }
+        .status-in-progress { background: #bee3f8; color: #3182ce; }
+        .status-resolved { background: #c6f6d5; color: #38a169; }
+        .status-pending { background: #feebc8; color: #dd6b20; }
+        .chart-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; }
+        .chart-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 12px; }
+        .chart-container { height: 200px; }
+        .stats-footer { display: flex; justify-content: space-between; background: white; border-radius: 8px; padding: 16px; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .stat-box { text-align: center; flex: 1; }
+        .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 4px; }
+        .stat-value { font-size: 24px; font-weight: 700; color: #1a202c; }
+        .stat-resolved { color: #38a169; }
+        .stat-under-review { color: #e53e3e; }
+        .leaflet-container { background: #2d3748; border-radius: 8px; }
+        .status-dropdown { padding: 4px 8px; border-radius: 4px; border: 1px solid #cbd5e0; font-size: 12px; font-weight: 500; cursor: pointer; background: white; transition: all 0.2s; }
+        .status-dropdown:hover { border-color: #38a169; }
+        .status-dropdown option { padding: 8px; }
+      `}</style>
 
       {/* KPI Cards */}
       <div className="kpi-grid">
@@ -655,36 +671,41 @@ const Dashboard = () => {
             {/* ✅ Map Controller - Auto-zoom + Double-click fade */}
             <MapController bins={bins} />
 
-            {/* ✅ Render bin markers */}
-            {bins.map((bin) => (
-              <CircleMarker
-                key={bin.id || bin.binId}
-                center={[bin.latitude, bin.longitude]}
-                radius={bin.fillLevel >= 90 ? 12 : bin.fillLevel >= 70 ? 10 : 8}
-                fillColor={getMarkerColor(bin.fillLevel, bin.isFlagged)}
-                color="#fff"
-                weight={2}
-                opacity={1}
-                fillOpacity={0.8}
-              >
-                <Popup>
-                  <strong>{bin.binId}</strong>
-                  <br />
-                  Location: {bin.locationName}
-                  <br />
-                  Fill Level: {bin.fillLevel}%
-                  <br />
-                  Status:{" "}
-                  {bin.isFlagged
-                    ? "🚩 Flagged"
-                    : bin.fillLevel >= 90
-                      ? "🔴 Critical"
-                      : bin.fillLevel >= 70
-                        ? "🟡 Full"
-                        : "🟢 Normal"}
-                </Popup>
-              </CircleMarker>
-            ))}
+            {/* ✅ Render bin markers with safe coordinate extraction */}
+            {bins.map((bin) => {
+              const coords = getBinCoordinates(bin);
+              if (!coords) return null;
+              return (
+                <CircleMarker
+                  key={bin.id || bin.binId}
+                  center={coords}
+                  radius={
+                    bin.fillLevel >= 90 ? 12 : bin.fillLevel >= 70 ? 10 : 8
+                  }
+                  fillColor={getMarkerColor(bin.fillLevel, bin.isFlagged)}
+                  color="#fff"
+                  weight={2}
+                  opacity={1}
+                  fillOpacity={0.8}
+                >
+                  <Popup>
+                    <strong>{bin.binId}</strong>
+                    <br />
+                    Location: {bin.locationName}
+                    <br />
+                    Fill Level: {bin.fillLevel}%<br />
+                    Status:{" "}
+                    {bin.isFlagged
+                      ? "🚩 Flagged"
+                      : bin.fillLevel >= 90
+                        ? "🔴 Critical"
+                        : bin.fillLevel >= 70
+                          ? "🟡 Full"
+                          : "🟢 Normal"}
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
 
             {/* Show message when no bins */}
             {bins.length === 0 && (
@@ -727,13 +748,10 @@ const Dashboard = () => {
             <span>Critical (90%+)</span>
           </div>
         </div>
-
         <div className="map-scale">
           <div>4km</div>
           <div>2mi</div>
         </div>
-
-        {/* ✅ REMOVED: Double-click hint label */}
       </div>
 
       {/* Content Section */}

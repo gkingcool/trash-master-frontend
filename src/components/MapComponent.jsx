@@ -12,12 +12,26 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require("leaflet/dist/images/marker-shadow.png"),
 });
 
-const MapComponent = ({ 
-  bins = [], 
+// ✅ Helper to safely extract coordinates from bin
+const getBinCoordinates = (bin) => {
+  // Try flat properties first (from getters)
+  if (bin.latitude && bin.longitude) {
+    return [bin.latitude, bin.longitude];
+  }
+  // Try nested Location object
+  if (bin.location && bin.location.lat && bin.location.lon) {
+    return [bin.location.lat, bin.location.lon];
+  }
+  // Return null if no valid coordinates
+  return null;
+};
+
+const MapComponent = ({
+  bins = [],
   center = [47.6101, -122.2015], // Bellevue, WA
   zoom = 13,
   height = "350px",
-  showLegend = true 
+  showLegend = true,
 }) => {
   const getMarkerColor = (fillLevel, flagged) => {
     if (flagged) return "#e53e3e";
@@ -28,7 +42,14 @@ const MapComponent = ({
   };
 
   return (
-    <div style={{ position: "relative", height: height, borderRadius: "8px", overflow: "hidden" }}>
+    <div
+      style={{
+        position: "relative",
+        height: height,
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
       <MapContainer
         center={center}
         zoom={zoom}
@@ -38,50 +59,109 @@ const MapComponent = ({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
-        
-        {bins.map((bin) => (
-          <CircleMarker
-            key={bin.id || bin.binId}
-            center={[bin.latitude, bin.longitude]}
-            radius={bin.fillLevel >= 90 ? 12 : bin.fillLevel >= 70 ? 10 : 8}
-            fillColor={getMarkerColor(bin.fillLevel, bin.flagged)}
-            color="#fff"
-            weight={2}
-            opacity={1}
-            fillOpacity={0.8}
-          >
-            <Popup>
-              <strong>{bin.binId}</strong><br />
-              Location: {bin.locationName}<br />
-              Fill Level: {bin.fillLevel}%<br />
-              Status: {bin.flagged ? "🚩 Flagged" : bin.fillLevel >= 90 ? "🔴 Critical" : bin.fillLevel >= 70 ? "🟡 Full" : "🟢 Normal"}
-            </Popup>
-          </CircleMarker>
-        ))}
+
+        {bins.map((bin) => {
+          const coords = getBinCoordinates(bin);
+          // ✅ Skip bins without valid coordinates
+          if (!coords) return null;
+
+          return (
+            <CircleMarker
+              key={bin.id || bin.binId}
+              center={coords}
+              radius={bin.fillLevel >= 90 ? 12 : bin.fillLevel >= 70 ? 10 : 8}
+              fillColor={getMarkerColor(
+                bin.fillLevel,
+                bin.flagged || bin.isFlagged,
+              )}
+              color="#fff"
+              weight={2}
+              opacity={1}
+              fillOpacity={0.8}
+            >
+              <Popup>
+                <strong>{bin.binId}</strong> <br />
+                Location: {bin.locationName} <br />
+                Fill Level: {bin.fillLevel}% <br />
+                Status:{" "}
+                {bin.flagged || bin.isFlagged
+                  ? "🚩 Flagged"
+                  : bin.fillLevel >= 90
+                    ? "🔴 Critical"
+                    : bin.fillLevel >= 70
+                      ? "🟡 Full"
+                      : "🟢 Normal"}
+              </Popup>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
       {showLegend && (
-        <div style={{
-          position: "absolute",
-          top: "20px",
-          left: "20px",
-          background: "rgba(255,255,255,0.9)",
-          borderRadius: "4px",
-          padding: "8px",
-          zIndex: 1000,
-          boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
-            <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38a169" }}></div>
-            <span style={{ fontSize: "12px", color: "#4a5568" }}>Normal (&lt;70%)</span>
+        <div
+          style={{
+            position: "absolute",
+            top: "20px",
+            left: "20px",
+            background: "rgba(255,255,255,0.9)",
+            borderRadius: "4px",
+            padding: "8px",
+            zIndex: 1000,
+            boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              marginBottom: "4px",
+            }}
+          >
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#38a169",
+              }}
+            ></div>
+            <span style={{ fontSize: "12px", color: "#4a5568" }}>
+              Normal (&lt;70%)
+            </span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
-            <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#dd6b20" }}></div>
-            <span style={{ fontSize: "12px", color: "#4a5568" }}>Full (70-89%)</span>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              marginBottom: "4px",
+            }}
+          >
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#dd6b20",
+              }}
+            ></div>
+            <span style={{ fontSize: "12px", color: "#4a5568" }}>
+              Full (70-89%)
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#e53e3e" }}></div>
-            <span style={{ fontSize: "12px", color: "#4a5568" }}>Critical (90%+)</span>
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#e53e3e",
+              }}
+            ></div>
+            <span style={{ fontSize: "12px", color: "#4a5568" }}>
+              Critical (90%+)
+            </span>
           </div>
         </div>
       )}

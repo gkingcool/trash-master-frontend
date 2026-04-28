@@ -162,9 +162,12 @@ import TeamsPage from "./components/TeamsPage";
 import BinsPage from "./components/BinsPage";
 import SettingsPage from "./components/SettingsPage";
 import DriverTrackingPage from "./components/DriverTrackingPage";
+import TruckManagement from "./components/TruckManagement";
+import RouteStatusPage from "./components/RouteStatusPage";
 
 // Driver Page
 import DriverPage from "./components/DriverPage";
+import DeploymentsPage from "./components/DeploymentsPage";
 
 // Protected Route wrapper with redirect
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -259,10 +262,11 @@ export default function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="drivers" element={<AdminDriverPage />} />
           <Route path="route-planner" element={<AdminRoutePlanner />} />
-          <Route path="route-status" element={<Dashboard />} />
           <Route path="teams" element={<TeamsPage />} />
           <Route path="bins" element={<BinsPage />} />
-          <Route path="deployments" element={<Dashboard />} />
+          <Route path="deployments" element={<DeploymentsPage />} />
+          <Route path="trucks" element={<TruckManagement />} />
+          <Route path="route-status" element={<RouteStatusPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route
             path="driver-tracking/:driverId"

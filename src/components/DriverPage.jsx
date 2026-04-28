@@ -75,7 +75,6 @@ const DriverPage = () => {
 
   // Completion State
   const [routeCompleted, setRouteCompleted] = useState(false);
-
   const [hoveredNotifId, setHoveredNotifId] = useState(null);
 
   // Bellevue Facility Coordinates
@@ -90,7 +89,6 @@ const DriverPage = () => {
         setShowNotifications(false);
       }
     };
-
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -117,7 +115,7 @@ const DriverPage = () => {
         }
       }
     } catch (e) {
-      console.error("Error parsing auth data:", e);
+      console.error("Error parsing auth data: ", e);
     }
 
     // Poll for new notifications every 15 seconds
@@ -150,7 +148,6 @@ const DriverPage = () => {
 
   const deleteNotification = async (notifId, e) => {
     if (e) e.stopPropagation(); // Prevent marking as read when deleting
-
     try {
       await axios.delete(`http://localhost:8080/api/notifications/${notifId}`);
       // Remove from local state
@@ -167,7 +164,6 @@ const DriverPage = () => {
   useEffect(() => {
     fetchCurrentRoute();
     fetchNotifications();
-
     // Clear any existing interval first
     const notifInterval = setInterval(fetchNotifications, 15000);
 
@@ -199,7 +195,7 @@ const DriverPage = () => {
     return "#38a169"; // Green (Normal)
   };
 
-  // ✅ Fetch Current Route
+  // ✅ Fetch Current Route - OPTIMIZED
   const fetchCurrentRoute = async () => {
     try {
       const auth = JSON.parse(localStorage.getItem("auth"));
@@ -211,23 +207,40 @@ const DriverPage = () => {
         return;
       }
 
-      console.log("Fetching route for driver: ", driverId);
+      console.log("Fetching route for driver:", driverId);
 
-      const response = await axios.get(
-        `http://localhost:8080/api/routes/by-driver/${driverId}/current`,
+      // 1. Get the Route Entity (contains binIds, truckId, etc.)
+      // Note: Your backend returns a List<Route>. We take the first active one.
+      const routeResponse = await axios.get(
+        `http://localhost:8080/api/routes/driver/${driverId}`,
       );
 
-      const routeData = response.data;
+      const routesList = routeResponse.data;
+      if (!routesList || routesList.length === 0) {
+        setError("No active route assigned. Contact administrator.");
+        setLoading(false);
+        return;
+      }
+
+      const routeData = routesList[0]; // Take the first active route
       setRoute(routeData);
 
-      const binPromises = routeData.binIds.map((binId) =>
-        axios.get(`http://localhost:8080/api/bins/${binId}`),
-      );
-      const binResponses = await Promise.all(binPromises);
-      setBins(binResponses.map((res) => res.data));
+      // 2. Get ALL Bins (contains lat/lon for every bin in the system)
+      const binsResponse = await axios.get("http://localhost:8080/api/bins");
+      const allBins = binsResponse.data;
+
+      // 3. Match Route BinIDs with Actual Bin Data
+      // This creates a list of bins specifically for this route, with coordinates included
+      const routeBins = routeData.binIds
+        .map((binId) => {
+          return allBins.find((b) => b.binId === binId || b.id === binId);
+        })
+        .filter((bin) => bin !== undefined); // Remove any nulls if a bin was deleted
+
+      setBins(routeBins);
       setLoading(false);
     } catch (err) {
-      console.error("Error fetching route: ", err);
+      console.error("Error fetching route:", err);
       if (err.response?.status === 404) {
         setError(
           "No route assigned. Contact administrator to generate a route.",
@@ -247,6 +260,9 @@ const DriverPage = () => {
   const confirmPickup = async () => {
     try {
       const currentBin = bins[currentStopIndex];
+
+      // Note: You might need to adjust this endpoint to accept binId instead of MongoDB _id
+      // Or update your backend to find by binId
       await axios.put(
         `http://localhost:8080/api/routes/${route.id}/bins/${currentBin.id}/collect`,
       );
@@ -384,9 +400,9 @@ const DriverPage = () => {
           >
             Great job! You've successfully collected all {bins.length} stops.
             <br />
-            <br />
             Total distance: {route?.totalDistance?.toFixed(1)} miles
           </p>
+
           <div
             style={{
               display: "flex",
@@ -512,6 +528,7 @@ const DriverPage = () => {
             →
           </div>
         </div>
+
         <div
           style={{
             fontSize: "20px",
@@ -543,12 +560,6 @@ const DriverPage = () => {
                 justifyContent: "center",
                 transition: "all 0.2s",
               }}
-              // onMouseEnter={(e) =>
-              //   (e.currentTarget.style.background = "#edf2f7")
-              // }
-              // onMouseLeave={(e) =>
-              //   (e.currentTarget.style.background = "#f8fafc")
-              // }
             >
               <img
                 src={alertIcon}
@@ -579,6 +590,7 @@ const DriverPage = () => {
                 </span>
               )}
             </button>
+
             {/* Notification Dropdown */}
             {showNotifications && (
               <div
@@ -625,6 +637,7 @@ const DriverPage = () => {
                     </span>
                   )}
                 </div>
+
                 {notifications.length === 0 ? (
                   <div
                     style={{

@@ -4,109 +4,130 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 const API_BASE_URL = "http://localhost:8080/api/employees";
-const ROUTES_API_URL = "http://localhost:8080/api/routes";
+const TRUCKS_API_URL = "http://localhost:8080/api/trucks"; // Added Trucks API
+const ROUTES_API_URL = "http://localhost:8080/api/routes/all";
 const NOTIFICATIONS_API_URL = "http://localhost:8080/api/notifications";
 
 const AdminDriverPage = () => {
   const navigate = useNavigate();
   const [drivers, setDrivers] = useState([]);
+  const [trucks, setTrucks] = useState([]); // ✅ State for Trucks
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
 
+  // Modal States
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [messageText, setMessageText] = useState("");
+  const [showAssignTruckModal, setShowAssignTruckModal] = useState(false); // ✅ New Modal
+  const [selectedTruckId, setSelectedTruckId] = useState(""); // ✅ Selected Truck
 
-  // Fetch drivers and calculate real-time stats
+  // Fetch drivers, trucks, and routes on load
   useEffect(() => {
-    const fetchDriversData = async () => {
-      try {
-        setLoading(true);
-        const employeesResponse = await axios.get(API_BASE_URL);
-        const allEmployees = employeesResponse.data;
-        const routesResponse = await axios.get(ROUTES_API_URL);
-        const allRoutes = routesResponse.data;
-
-        const driverEmployees = allEmployees.filter(
-          (emp) => emp.role?.toUpperCase() === "DRIVER",
-        );
-
-        const driverData = driverEmployees.map((emp) => {
-          const activeRoute = allRoutes.find(
-            (route) =>
-              route.driverId === emp.employeeId &&
-              (route.status === "CREATED" || route.status === "IN_PROGRESS"),
-          );
-
-          const completedStops = activeRoute?.completedBinIds?.length || 0;
-          const totalStops = activeRoute?.totalStops || 0;
-          const efficiency =
-            totalStops > 0
-              ? Math.round((completedStops / totalStops) * 100)
-              : 0;
-          const collectionAmount = (completedStops * 0.5).toFixed(1);
-
-          return {
-            id: emp.employeeId,
-            name: `${emp.firstName} ${emp.lastName}`,
-            status:
-              emp.status === "ACTIVE" || emp.active ? "active" : "offline",
-            currentRoute: activeRoute?.routeNumber || null,
-            vehicle: `Truck #${(parseInt(emp.employeeId?.replace(/\D/g, "") || "0") % 20) + 1}`,
-            completedStops,
-            totalStops,
-            progress: totalStops > 0 ? (completedStops / totalStops) * 100 : 0,
-            location:
-              (emp.status === "ACTIVE" || emp.active) && activeRoute
-                ? "On Route"
-                : "Depot",
-            phone: emp.phone || "N/A",
-            email: emp.email,
-            avatar: `${emp.firstName?.[0] || ""}${emp.lastName?.[0] || ""}`,
-            todayCollection: `${collectionAmount} tons`,
-            efficiency: `${efficiency}%`,
-            lastUpdate: activeRoute?.updatedAt
-              ? new Date(activeRoute.updatedAt).toLocaleTimeString()
-              : "Just now",
-            employeeId: emp.employeeId,
-            firstName: emp.firstName,
-            lastName: emp.lastName,
-            routeData: activeRoute,
-          };
-        });
-
-        setDrivers(driverData);
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching drivers data:", err);
-        setError("Failed to load drivers. Make sure backend is running.");
-        setLoading(false);
-      }
-    };
-
-    fetchDriversData();
-    const interval = setInterval(fetchDriversData, 30000);
+    fetchAllData();
+    const interval = setInterval(fetchAllData, 30000); // Refresh every 30s
     return () => clearInterval(interval);
   }, []);
 
-  const activeDrivers = drivers.filter((d) => d.status === "active").length;
-  const totalCollection = drivers.reduce(
-    (acc, d) => acc + parseFloat(d.todayCollection) || 0,
-    0,
-  );
-  const avgEfficiency =
-    drivers.length > 0
-      ? Math.round(
-          drivers.reduce((acc, d) => acc + (parseInt(d.efficiency) || 0), 0) /
-            drivers.length,
-        )
-      : 0;
+  const fetchAllData = async () => {
+    try {
+      setLoading(true);
 
-  const filteredDrivers =
-    filterStatus === "all"
-      ? drivers
-      : drivers.filter((d) => d.status === filterStatus);
+      // 1. Fetch Employees
+      const employeesResponse = await axios.get(API_BASE_URL);
+      const allEmployees = employeesResponse.data;
+      const driverEmployees = allEmployees.filter(
+        (emp) => emp.role?.toUpperCase() === "DRIVER",
+      );
+
+      // 2. Fetch Trucks
+      const trucksResponse = await axios.get(TRUCKS_API_URL);
+      setTrucks(trucksResponse.data);
+
+      // 3. Fetch Routes
+      const routesResponse = await axios.get(ROUTES_API_URL);
+      const allRoutes = routesResponse.data;
+
+      // 4. Merge Data
+      const driverData = driverEmployees.map((emp) => {
+        const activeRoute = allRoutes.find(
+          (route) =>
+            route.driverId === emp.employeeId &&
+            (route.status === "CREATED" || route.status === "IN_PROGRESS"),
+        );
+
+        // Find which truck is currently assigned to this driver
+        const assignedTruck = trucksResponse.data.find(
+          (t) => t.assignedDriverId === emp.employeeId,
+        );
+
+        const completedStops = activeRoute?.completedBinIds?.length || 0;
+        const totalStops = activeRoute?.totalStops || 0;
+        const efficiency =
+          totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
+
+        return {
+          id: emp.employeeId,
+          name: `${emp.firstName} ${emp.lastName}`,
+          status: emp.status === "ACTIVE" || emp.active ? "active" : "offline",
+          currentRoute: activeRoute?.routeNumber || null,
+          // ✅ Use real truck ID if found, otherwise fallback
+          vehicle: assignedTruck ? assignedTruck.truckId : "Unassigned",
+          completedStops,
+          totalStops,
+          progress: totalStops > 0 ? (completedStops / totalStops) * 100 : 0,
+          location:
+            (emp.status === "ACTIVE" || emp.active) && activeRoute
+              ? "On Route"
+              : "Depot",
+          phone: emp.phone || "N/A",
+          email: emp.email,
+          avatar: `${emp.firstName?.[0] || ""}${emp.lastName?.[0] || ""}`,
+          todayCollection: `${(completedStops * 0.5).toFixed(1)} tons`,
+          efficiency: `${efficiency}%`,
+          lastUpdate: activeRoute?.updatedAt
+            ? new Date(activeRoute.updatedAt).toLocaleTimeString()
+            : "Just now",
+          employeeId: emp.employeeId,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          routeData: activeRoute,
+        };
+      });
+
+      setDrivers(driverData);
+      setLoading(false);
+    } catch (err) {
+      console.error("Error fetching ", err);
+      setError(
+        "Failed to load drivers or trucks. Make sure backend is running.",
+      );
+      setLoading(false);
+    }
+  };
+
+  // ✅ Handle Truck Assignment
+  const handleAssignTruck = async () => {
+    if (!selectedDriver || !selectedTruckId) return;
+
+    try {
+      // Update the Truck entity with the new Driver ID
+      // We use PUT /api/trucks/{truckId}
+      await axios.put(`${TRUCKS_API_URL}/${selectedTruckId}`, {
+        assignedDriverId: selectedDriver.id,
+        currentCompactedYards: 0.0, // Reset load when assigning to a new driver/route
+      });
+
+      alert(`✅ Truck ${selectedTruckId} assigned to ${selectedDriver.name}`);
+      setShowAssignTruckModal(false);
+      setSelectedTruckId("");
+      fetchAllData(); // Refresh to show updates
+    } catch (err) {
+      console.error("Error assigning truck:", err);
+      alert("Failed to assign truck. It may already be assigned or not exist.");
+    }
+  };
 
   const getStatusBadgeClass = (status) => {
     switch (status) {
@@ -133,7 +154,6 @@ const AdminDriverPage = () => {
 
   const handleSendMessage = async () => {
     if (!messageText.trim() || !selectedDriver) return;
-
     try {
       await axios.post(NOTIFICATIONS_API_URL, {
         title: "Message from Admin",
@@ -142,471 +162,115 @@ const AdminDriverPage = () => {
         type: "INFO",
         isRead: false,
       });
-
       alert("Message sent successfully!");
       setShowMessageModal(false);
       setMessageText("");
     } catch (err) {
-      console.error("Error sending message:", err);
-      alert("Failed to send message. Ensure backend is running.");
+      alert("Failed to send message.");
     }
   };
 
-  if (loading) {
-    return (
-      <div style={{ padding: "40px", textAlign: "center" }}>
-        <div
-          className="spinner"
-          style={{
-            border: "4px solid #f0f0f0",
-            borderTop: "4px solid #38a169",
-            borderRadius: "50%",
-            width: "40px",
-            height: "40px",
-            animation: "spin 1s linear infinite",
-            margin: "0 auto",
-          }}
-        />
-        <p style={{ marginTop: "16px", color: "#4a5568" }}>
-          Loading drivers...
-        </p>
-      </div>
-    );
-  }
+  // Open Assign Truck Modal
+  const openAssignTruckModal = (driver) => {
+    setSelectedDriver(driver);
+    // Pre-select the truck currently assigned to this driver if any
+    const currentTruck = trucks.find((t) => t.assignedDriverId === driver.id);
+    setSelectedTruckId(currentTruck ? currentTruck.truckId : "");
+    setShowAssignTruckModal(true);
+  };
 
-  if (error) {
+  if (loading)
+    return (
+      <div style={{ padding: "40px", textAlign: "center" }}>Loading...</div>
+    );
+  if (error)
     return (
       <div style={{ padding: "40px", textAlign: "center", color: "#e53e3e" }}>
         {error}
       </div>
     );
-  }
+
+  const activeDrivers = drivers.filter((d) => d.status === "active").length;
+  const filteredDrivers =
+    filterStatus === "all"
+      ? drivers
+      : drivers.filter((d) => d.status === filterStatus);
 
   return (
     <div className="admin-driver-page">
+      {/* Styles */}
       <style>{`
-        .admin-driver-page {
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          padding: 20px;
-          background-color: #f5f7fa;
-          min-height: 100vh;
-        }
-        .admin-driver-page .page-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 24px;
-        }
-        .admin-driver-page .page-title {
-          font-size: 24px;
-          font-weight: 600;
-          color: #2d3748;
-          margin: 0;
-        }
-        .admin-driver-page .header-actions {
-          display: flex;
-          gap: 12px;
-        }
-        .admin-driver-page .btn-primary {
-          background: #38a169;
-          color: white;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 6px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .admin-driver-page .btn-primary:hover {  
-          background: #2f855a;
-        }
-        .admin-driver-page .btn-secondary {
-          background: white;
-          color: #4a5568;
-          border: 1px solid #e2e8f0;
-          padding: 10px 20px; 
-          border-radius: 6px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .admin-driver-page .btn-secondary:hover {
-          background: #f8fafc;
-        }
-        .admin-driver-page .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
-          margin-bottom: 24px;
-        }
-        .admin-driver-page .stat-card {
-          background: white;
-          border-radius: 8px;
-          padding: 20px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        .admin-driver-page .stat-label { 
-          font-size: 14px;
-          color: #4a5568;
-          margin-bottom: 8px;
-        }
-        .admin-driver-page .stat-value {
-          font-size: 28px;
-          font-weight: 700;
-          color: #1a202c;
-        }
-        .admin-driver-page .stat-subtitle {
-          font-size: 12px;
-          color: #718096;
-          margin-top: 4px;
-        }
-        .admin-driver-page .filter-bar {
-          display: flex;
-          gap: 12px;
-          margin-bottom: 20px;
-          align-items: center;
-        }
-        .admin-driver-page .filter-label {
-          font-size: 14px;
-          color: #4a5568;
-          font-weight: 500;
-        }
-        .admin-driver-page .filter-buttons {
-          display: flex;
-          gap: 8px;
-        }
-        .admin-driver-page .filter-btn {
-          padding: 8px 16px;
-          border: 1px solid #e2e8f0;
-          background: white;
-          border-radius: 6px;
-          cursor: pointer;
-          font-size: 14px;
-          transition: all 0.2s;
-        }
-        .admin-driver-page .filter-btn.active {
-          background: #38a169;
-          color: white;
-          border-color: #38a169;
-        }
-        .admin-driver-page .filter-btn:hover:not(.active) {
-          background: #f8fafc;
-        }
-        .admin-driver-page .drivers-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-          gap: 20px;
-        }
-        .admin-driver-page .driver-card {
-          background: white;
-          border-radius: 8px;
-          padding: 20px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-          cursor: pointer;
-          transition: all 0.2s;
-          border: 2px solid transparent;
-        }
-        .admin-driver-page .driver-card:hover {
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-          transform: translateY(-2px);
-        }
-        .admin-driver-page .driver-card.selected {
-          border-color: #38a169;
-        }
-        .admin-driver-page .driver-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          margin-bottom: 16px;
-        }
-        .admin-driver-page .driver-info {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .admin-driver-page .driver-avatar {
-          width: 48px;
-          height: 48px;
-          border-radius: 50%;
-          background: #38a169;
-          color: white;
-          font-weight: 600;
-          font-size: 16px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .admin-driver-page .driver-details h3 {
-          margin: 0;
-          font-size: 16px;
-          color: #2d3748;
-          font-weight: 600;
-        }
-        .admin-driver-page .driver-id {
-          font-size: 13px;
-          color: #718096;
-          margin-top: 2px;
-        }
-        .admin-driver-page .status-badge {
-          padding: 6px 12px;
-          border-radius: 20px;
-          font-size: 12px;
-          font-weight: 600;
-          text-transform: capitalize;
-        }
-        .admin-driver-page .status-active {
-          background: #c6f6d5;
-          color: #38a169;
-        }
-        .admin-driver-page .status-idle {
-          background: #e2e8f0;
-          color: #4a5568;
-        }
-        .admin-driver-page .status-offline {
-          background: #fed7d7;
-          color: #e53e3e;
-        }
-        .admin-driver-page .driver-stats {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 12px;
-          margin-bottom: 16px;
-        }
-        .admin-driver-page .driver-stat {
-          padding: 12px;
-          background: #f8fafc;
-          border-radius: 6px;
-        }
-        .admin-driver-page .driver-stat-label {
-          font-size: 12px;
-          color: #718096;
-          margin-bottom: 4px;
-        }
-        .admin-driver-page .driver-stat-value { 
-          font-size: 16px;
-          font-weight: 600;
-          color: #2d3748;
-        }
-        .admin-driver-page .progress-section {
-          margin-bottom: 16px;
-        }
-        .admin-driver-page .progress-header {
-          display: flex;
-          justify-content: space-between;
-          margin-bottom: 8px;
-          font-size: 13px;
-        }
-        .admin-driver-page .progress-label {
-          color: #4a5568;
-        }
-        .admin-driver-page .progress-value {
-          color: #2d3748;
-          font-weight: 600;
-        }
-        .admin-driver-page .progress-bar {
-          height: 8px;
-          background: #edf2f7;
-          border-radius: 4px;
-          overflow: hidden;
-        }
-        .admin-driver-page .progress-fill {
-          height: 100%;
-          background: #38a169;
-          border-radius: 4px;
-          transition: width 0.3s;
-        }
-        .admin-driver-page .driver-footer {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding-top: 16px;
-          border-top: 1px solid #edf2f7;
-          font-size: 13px;
-        }
-        .admin-driver-page .driver-location {
-          color: #4a5568;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .admin-driver-page .driver-time {
-          color: #718096;
-        }
-        .admin-driver-page .driver-detail-modal {
-          position: fixed;
-          top: 0;
-          right: 0;
-          width: 450px;
-          height: 100vh;
-          background: white;
-          box-shadow: -4px 0 12px rgba(0,0,0,0.1);
-          z-index: 1000;
-          overflow-y: auto; 
-          transform: translateX(100%);
-          transition: transform 0.3s;
-        }
-        .admin-driver-page .driver-detail-modal.open {
-          transform: translateX(0);
-        }
-        .admin-driver-page .modal-header {
-          padding: 24px;
-          border-bottom: 1px solid #edf2f7;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .admin-driver-page .modal-title {
-          font-size: 20px;
-          font-weight: 600;
-          color: #2d3748;
-          margin: 0;
-        }
-        .admin-driver-page .close-btn {
-          background: none;
-          border: none;
-          font-size: 24px;
-          cursor: pointer;
-          color: #718096;
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: all 0.2s;
-        }
-        .admin-driver-page .close-btn:hover {
-          background: #f8fafc;
-          color: #2d3748;
-        }
-        .admin-driver-page .modal-body {
-          padding: 24px;
-        }
-        .admin-driver-page .detail-section {
-          margin-bottom: 28px;
-        }
-        .admin-driver-page .section-title {
-          font-size: 14px;
-          font-weight: 600;
-          color: #4a5568;
-          margin-bottom: 16px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-        .admin-driver-page .detail-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 12px 0;
-          border-bottom: 1px solid #f8fafc;
-        }
-        .admin-driver-page .detail-label {
-          color: #718096;
-          font-size: 14px;
-        }
-        .admin-driver-page .detail-value {
-          color: #2d3748;
-          font-weight: 500;
-          font-size: 14px;
-        }
-        .admin-driver-page .action-buttons {
-          display: flex;
-          gap: 12px;
-          margin-top: 24px;
-        }
-        .admin-driver-page .action-btn {
-          flex: 1;
-          padding: 12px;
-          border: none;
-          border-radius: 6px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .admin-driver-page .btn-view-route {
-          background: #38a169;
-          color: white;
-        }
-        .admin-driver-page .btn-view-route:hover {
-          background: #2f855a;
-        }
-        .admin-driver-page .btn-contact {
-          background: #3182ce;
-          color: white;
-        }
-        .admin-driver-page .btn-contact:hover {
-          background: #2c5282;
-        }
-        .admin-driver-page .overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0,0,0,0.5);
-          z-index: 999;
-          opacity: 0;
-          visibility: hidden;
-          transition: all 0.3s;
-        }
-        .admin-driver-page .overlay.show {
-          opacity: 1;
-          visibility: visible;
-        }
-        .admin-driver-page .no-drivers {
-          grid-column: 1 / -1;
-          text-align: center;
-          padding: 120px 20px;
-          color: #718096;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          min-height: 500px;
-          width: 100%;
-        }
-        .admin-driver-page .no-drivers-icon {
-          font-size: 80px;
-          margin-bottom: 24px;
-          opacity: 0.5;
-        }
-        /* ✅ New Styles for Centered Message Modal */
-        .admin-driver-page .message-modal-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0,0,0,0.5);
-          z-index: 2000; /* Higher than side modal */
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .admin-driver-page .message-modal-content {
-          background: white;
-          padding: 24px;
-          border-radius: 12px;
-          width: 90%;
-          max-width: 500px;
-          box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-        }
-        .admin-driver-page .message-textarea {
-          width: 100%;
-          padding: 12px;
-          border: 1px solid #cbd5e0;
-          border-radius: 6px;
-          font-size: 14px;
-          minHeight: 120px;
-          box-sizing: border-box;
-          margin-bottom: 16px;
-          font-family: inherit;
-          resize: vertical;
-        }
-        .admin-driver-page .message-textarea:focus {
-          outline: none;
-          border-color: #38a169;
-          box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.1);
-        }
+        .admin-driver-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f5f7fa; min-height: 100vh; }
+        .admin-driver-page .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .admin-driver-page .page-title { font-size: 24px; font-weight: 600; color: #2d3748; margin: 0; }
+        .admin-driver-page .header-actions { display: flex; gap: 12px; }
+        .admin-driver-page .btn-primary { background: #38a169; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .admin-driver-page .btn-primary:hover { background: #2f855a; }
+        .admin-driver-page .btn-secondary { background: white; color: #4a5568; border: 1px solid #e2e8f0; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .admin-driver-page .btn-secondary:hover { background: #f8fafc; }
+        .admin-driver-page .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .admin-driver-page .stat-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .admin-driver-page .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
+        .admin-driver-page .stat-value { font-size: 28px; font-weight: 700; color: #1a202c; }
+        .admin-driver-page .stat-subtitle { font-size: 12px; color: #718096; margin-top: 4px; }
+        .admin-driver-page .filter-bar { display: flex; gap: 12px; margin-bottom: 20px; align-items: center; }
+        .admin-driver-page .filter-label { font-size: 14px; color: #4a5568; font-weight: 500; }
+        .admin-driver-page .filter-buttons { display: flex; gap: 8px; }
+        .admin-driver-page .filter-btn { padding: 8px 16px; border: 1px solid #e2e8f0; background: white; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+        .admin-driver-page .filter-btn.active { background: #38a169; color: white; border-color: #38a169; }
+        .admin-driver-page .filter-btn:hover:not(.active) { background: #f8fafc; }
+        .admin-driver-page .drivers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+        .admin-driver-page .driver-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; transition: all 0.2s; border: 2px solid transparent; }
+        .admin-driver-page .driver-card:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.1); transform: translateY(-2px); }
+        .admin-driver-page .driver-card.selected { border-color: #38a169; }
+        .admin-driver-page .driver-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+        .admin-driver-page .driver-info { display: flex; align-items: center; gap: 12px; }
+        .admin-driver-page .driver-avatar { width: 48px; height: 48px; border-radius: 50%; background: #38a169; color: white; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+        .admin-driver-page .driver-details h3 { margin: 0; font-size: 16px; color: #2d3748; font-weight: 600; }
+        .admin-driver-page .driver-id { font-size: 13px; color: #718096; margin-top: 2px; }
+        .admin-driver-page .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
+        .admin-driver-page .status-active { background: #c6f6d5; color: #38a169; }
+        .admin-driver-page .status-idle { background: #e2e8f0; color: #4a5568; }
+        .admin-driver-page .status-offline { background: #fed7d7; color: #e53e3e; }
+        .admin-driver-page .driver-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
+        .admin-driver-page .driver-stat { padding: 12px; background: #f8fafc; border-radius: 6px; }
+        .admin-driver-page .driver-stat-label { font-size: 12px; color: #718096; margin-bottom: 4px; }
+        .admin-driver-page .driver-stat-value { font-size: 16px; font-weight: 600; color: #2d3748; }
+        .admin-driver-page .progress-section { margin-bottom: 16px; }
+        .admin-driver-page .progress-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+        .admin-driver-page .progress-label { color: #4a5568; }
+        .admin-driver-page .progress-value { color: #2d3748; font-weight: 600; }
+        .admin-driver-page .progress-bar { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; }
+        .admin-driver-page .progress-fill { height: 100%; background: #38a169; border-radius: 4px; transition: width 0.3s; }
+        .admin-driver-page .driver-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid #edf2f7; font-size: 13px; }
+        .admin-driver-page .driver-location { color: #4a5568; display: flex; align-items: center; gap: 6px; }
+        .admin-driver-page .driver-time { color: #718096; }
+        .admin-driver-page .driver-detail-modal { position: fixed; top: 0; right: 0; width: 450px; height: 100vh; background: white; box-shadow: -4px 0 12px rgba(0,0,0,0.1); z-index: 1000; overflow-y: auto; transform: translateX(100%); transition: transform 0.3s; }
+        .admin-driver-page .driver-detail-modal.open { transform: translateX(0); }
+        .admin-driver-page .modal-header { padding: 24px; border-bottom: 1px solid #edf2f7; display: flex; justify-content: space-between; align-items: center; }
+        .admin-driver-page .modal-title { font-size: 20px; font-weight: 600; color: #2d3748; margin: 0; }
+        .admin-driver-page .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #718096; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+        .admin-driver-page .close-btn:hover { background: #f8fafc; color: #2d3748; }
+        .admin-driver-page .modal-body { padding: 24px; }
+        .admin-driver-page .detail-section { margin-bottom: 28px; }
+        .admin-driver-page .section-title { font-size: 14px; font-weight: 600; color: #4a5568; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .admin-driver-page .detail-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f8fafc; }
+        .admin-driver-page .detail-label { color: #718096; font-size: 14px; }
+        .admin-driver-page .detail-value { color: #2d3748; font-weight: 500; font-size: 14px; }
+        .admin-driver-page .action-buttons { display: flex; gap: 12px; margin-top: 24px; }
+        .admin-driver-page .action-btn { flex: 1; padding: 12px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .admin-driver-page .btn-view-route { background: #38a169; color: white; }
+        .admin-driver-page .btn-view-route:hover { background: #2f855a; }
+        .admin-driver-page .btn-contact { background: #3182ce; color: white; }
+        .admin-driver-page .btn-contact:hover { background: #2c5282; }
+        .admin-driver-page .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 999; opacity: 0; visibility: hidden; transition: all 0.3s; }
+        .admin-driver-page .overlay.show { opacity: 1; visibility: visible; }
+        .admin-driver-page .no-drivers { grid-column: 1 / -1; text-align: center; padding: 120px 20px; color: #718096; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 500px; width: 100%; }
+        .admin-driver-page .no-drivers-icon { font-size: 80px; margin-bottom: 24px; opacity: 0.5; }
+        .admin-driver-page .message-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+        .admin-driver-page .message-modal-content { background: white; padding: 24px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .admin-driver-page .message-textarea { width: 100%; padding: 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px; minHeight: 120px; box-sizing: border-box; margin-bottom: 16px; font-family: inherit; resize: vertical; }
+        .admin-driver-page .message-textarea:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.1); }
       `}</style>
 
       {/* Page Header */}
@@ -640,13 +304,26 @@ const AdminDriverPage = () => {
         </div>
         <div className="stat-card">
           <div className="stat-label">Today's Collection</div>
-          <div className="stat-value">{totalCollection.toFixed(1)} tons</div>
+          <div className="stat-value">
+            {drivers
+              .reduce((acc, d) => acc + parseFloat(d.todayCollection) || 0, 0)
+              .toFixed(1)}{" "}
+            tons
+          </div>
           <div className="stat-subtitle">Total collected today</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Avg. Efficiency</div>
           <div className="stat-value" style={{ color: "#38a169" }}>
-            {avgEfficiency}%
+            {drivers.length > 0
+              ? Math.round(
+                  drivers.reduce(
+                    (acc, d) => acc + (parseInt(d.efficiency) || 0),
+                    0,
+                  ) / drivers.length,
+                )
+              : 0}
+            %
           </div>
           <div className="stat-subtitle">Performance metric</div>
         </div>
@@ -731,7 +408,15 @@ const AdminDriverPage = () => {
               <div className="driver-stats">
                 <div className="driver-stat">
                   <div className="driver-stat-label">Vehicle</div>
-                  <div className="driver-stat-value">{driver.vehicle}</div>
+                  <div
+                    className="driver-stat-value"
+                    style={{
+                      color:
+                        driver.vehicle === "Unassigned" ? "#e53e3e" : "#2d3748",
+                    }}
+                  >
+                    {driver.vehicle}
+                  </div>
                 </div>
                 <div className="driver-stat">
                   <div className="driver-stat-label">Collection Today</div>
@@ -842,7 +527,17 @@ const AdminDriverPage = () => {
                 <div className="section-title">Current Assignment</div>
                 <div className="detail-row">
                   <span className="detail-label">Vehicle</span>
-                  <span className="detail-value">{selectedDriver.vehicle}</span>
+                  <span
+                    className="detail-value"
+                    style={{
+                      color:
+                        selectedDriver.vehicle === "Unassigned"
+                          ? "#e53e3e"
+                          : "#2d3748",
+                    }}
+                  >
+                    {selectedDriver.vehicle}
+                  </span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-label">Route</span>
@@ -885,7 +580,16 @@ const AdminDriverPage = () => {
                 >
                   View Live Route
                 </button>
-                {/* ✅ Updated to open centered modal */}
+
+                {/* ✅ NEW: Assign Truck Button */}
+                <button
+                  className="action-btn"
+                  style={{ background: "#805ad5", color: "white" }}
+                  onClick={() => openAssignTruckModal(selectedDriver)}
+                >
+                  Assign Truck
+                </button>
+
                 <button
                   className="action-btn btn-contact"
                   onClick={handleContactDriver}
@@ -898,7 +602,79 @@ const AdminDriverPage = () => {
         )}
       </div>
 
-      {/* ✅ New Centered Message Modal */}
+      {/* ✅ Assign Truck Modal */}
+      {showAssignTruckModal && (
+        <div className="message-modal-overlay">
+          <div
+            className="message-modal-content"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              style={{ marginTop: 0, marginBottom: "16px", color: "#2d3748" }}
+            >
+              Assign Truck to {selectedDriver?.name}
+            </h3>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  fontWeight: "600",
+                }}
+              >
+                Select Truck:
+              </label>
+              <select
+                value={selectedTruckId}
+                onChange={(e) => setSelectedTruckId(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  borderRadius: "6px",
+                  border: "1px solid #cbd5e0",
+                }}
+              >
+                <option value="">-- Select a Truck --</option>
+                {trucks.map((truck) => (
+                  <option key={truck.truckId} value={truck.truckId}>
+                    {truck.truckId}
+                    {truck.assignedDriverId &&
+                    truck.assignedDriverId !== selectedDriver.id
+                      ? ` (Currently: ${truck.assignedDriverId})`
+                      : " (Available)"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                className="btn-secondary"
+                onClick={() => setShowAssignTruckModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleAssignTruck}
+                disabled={!selectedTruckId}
+                style={{ opacity: !selectedTruckId ? 0.6 : 1 }}
+              >
+                Confirm Assignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Message Modal */}
       {showMessageModal && (
         <div className="message-modal-overlay">
           <div
