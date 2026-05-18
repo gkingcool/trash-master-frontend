@@ -164,6 +164,7 @@ import SettingsPage from "./components/SettingsPage";
 import DriverTrackingPage from "./components/DriverTrackingPage";
 import TruckManagement from "./components/TruckManagement";
 import RouteStatusPage from "./components/RouteStatusPage";
+import SensorPage from "./components/SensorPage";
 
 // Driver Page
 import DriverPage from "./components/DriverPage";
@@ -267,6 +268,7 @@ export default function App() {
           <Route path="deployments" element={<DeploymentsPage />} />
           <Route path="trucks" element={<TruckManagement />} />
           <Route path="route-status" element={<RouteStatusPage />} />
+          <Route path="sensors" element={<SensorPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route
             path="driver-tracking/:driverId"

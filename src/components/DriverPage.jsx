@@ -1,4 +1,3 @@
-// src/components/DriverPage.jsx
 import React, { useState, useEffect, useRef } from "react";
 import {
   MapContainer,
@@ -6,6 +5,7 @@ import {
   CircleMarker,
   Popup,
   Polyline,
+  Marker,
   useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -16,7 +16,7 @@ import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import alertIcon from "../assets/icons/alert-icon.png";
 
-// Fix Leaflet marker icons
+// Fix Leaflet default markers
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -24,11 +24,18 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-// ✅ Map Controller: Uses panTo to AVOID zooming in/out
+const depotIcon = L.icon({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIcon2x,
+  shadowUrl: markerShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
+
 function MapController({ currentStop, bins, depotCoordinates }) {
   const map = useMap();
-
-  // ✅ 1. Initial Load: Fit map to show ALL stops and the depot
   useEffect(() => {
     if (bins.length > 0 && depotCoordinates) {
       const allCoords = [
@@ -39,7 +46,6 @@ function MapController({ currentStop, bins, depotCoordinates }) {
     }
   }, [map, bins, depotCoordinates]);
 
-  // ✅ 2. Navigation: Smoothly move map WITHOUT changing zoom level
   useEffect(() => {
     if (currentStop && currentStop.latitude && currentStop.longitude) {
       map.panTo([currentStop.latitude, currentStop.longitude], {
@@ -59,27 +65,26 @@ const DriverPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const notificationRef = useRef(null);
-
-  // ✅ Driver info state for initials
   const [driverInitials, setDriverInitials] = useState("DR");
-
-  // ✅ Notification States (for bell icon)
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-
-  // Modal States
   const [showReportModal, setShowReportModal] = useState(false);
   const [issueText, setIssueText] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-
-  // Completion State
   const [routeCompleted, setRouteCompleted] = useState(false);
   const [hoveredNotifId, setHoveredNotifId] = useState(null);
+  const [depotCoordinates, setDepotCoordinates] = useState([
+    47.6101, -122.2015,
+  ]);
+  const [depotName, setDepotName] = useState("Bellevue Facility");
+  const [roadPath, setRoadPath] = useState(null);
 
-  // Bellevue Facility Coordinates
-  const depotCoordinates = [47.6101, -122.2015];
+  // Skip/Unable to Access States
+  const [showSkipModal, setShowSkipModal] = useState(false);
+  const [skipReason, setSkipReason] = useState("");
 
+  // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -90,96 +95,94 @@ const DriverPage = () => {
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Initial Load & Polling
   useEffect(() => {
     fetchCurrentRoute();
-    fetchNotifications(); // ✅ Fetch notifications for bell
-
-    // ✅ Extract Initials from Login Data
+    fetchNotifications();
     try {
       const auth = JSON.parse(localStorage.getItem("auth") || "{}");
       let name = auth.name;
-      if (!name && auth.firstName && auth.lastName) {
+      if (!name && auth.firstName && auth.lastName)
         name = `${auth.firstName} ${auth.lastName}`;
-      }
       if (name) {
         const names = name.trim().split(" ");
-        if (names.length >= 2) {
+        if (names.length >= 2)
           setDriverInitials((names[0][0] + names[1][0]).toUpperCase());
-        } else if (names.length === 1) {
+        else if (names.length === 1)
           setDriverInitials(names[0].substring(0, 2).toUpperCase());
-        }
       }
     } catch (e) {
-      console.error("Error parsing auth data: ", e);
+      console.error("Error parsing auth data:", e);
     }
-
-    // Poll for new notifications every 15 seconds
     const notifInterval = setInterval(fetchNotifications, 15000);
     return () => clearInterval(notifInterval);
   }, []);
 
-  // ✅ Fetch Notifications for this Driver
+  // ✅ Calculate Distance (Haversine) if backend doesn't provide it
+  const calculateDistance = (path) => {
+    if (!path || path.length < 2) return 0;
+    let total = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+      const [lat1, lon1] = path[i];
+      const [lat2, lon2] = path[i + 1];
+      const R = 3959; // Earth radius in miles
+      const dLat = ((lat2 - lat1) * Math.PI) / 180;
+      const dLon = ((lon2 - lon1) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((lat1 * Math.PI) / 180) *
+          Math.cos((lat2 * Math.PI) / 180) *
+          Math.sin(dLon / 2) ** 2;
+      total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    return total;
+  };
+
+  // ✅ FETCH: Personal + DRIVER_ALERT system alerts only
   const fetchNotifications = async () => {
     try {
       const auth = JSON.parse(localStorage.getItem("auth"));
       const driverId = auth?.employeeId;
       if (!driverId) return;
-
       const response = await axios.get(
         "http://localhost:8080/api/notifications",
       );
-
-      // Filter notifications specific to this driver
-      const driverNotifs = response.data.filter((n) => n.driverId === driverId);
+      const driverNotifs = response.data.filter(
+        (n) => n.driverId === driverId || n.driverId === "DRIVER_ALERT",
+      );
       setNotifications(driverNotifs);
-
-      // Count unread
-      const unread = driverNotifs.filter((n) => !n.isRead).length;
+      const unread = driverNotifs.filter((n) => !n.read && !n.isRead).length;
       setUnreadCount(unread);
     } catch (err) {
       console.error("Error fetching notifications:", err);
     }
   };
 
+  // ✅ HARD DELETE: Removes from DB permanently
   const deleteNotification = async (notifId, e) => {
-    if (e) e.stopPropagation(); // Prevent marking as read when deleting
+    if (e) e.stopPropagation();
     try {
       await axios.delete(`http://localhost:8080/api/notifications/${notifId}`);
-      // Remove from local state
       setNotifications((prev) => prev.filter((n) => n.id !== notifId));
-      // Update unread count
       setUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (err) {
       console.error("Error deleting notification:", err);
-      alert("Failed to delete notification");
     }
   };
 
-  // Update the useEffect to clean up intervals properly
-  useEffect(() => {
-    fetchCurrentRoute();
-    fetchNotifications();
-    // Clear any existing interval first
-    const notifInterval = setInterval(fetchNotifications, 15000);
-
-    return () => {
-      clearInterval(notifInterval);
-    };
-  }, []);
-
-  // ✅ Mark Notification as Read
+  // ✅ MARK READ: Syncs both fields to backend
   const markAsRead = async (notifId) => {
     try {
       await axios.put(
         `http://localhost:8080/api/notifications/${notifId}/read`,
       );
       setNotifications((prev) =>
-        prev.map((n) => (n.id === notifId ? { ...n, isRead: true } : n)),
+        prev.map((n) =>
+          n.id === notifId ? { ...n, read: true, isRead: true } : n,
+        ),
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (err) {
@@ -187,97 +190,156 @@ const DriverPage = () => {
     }
   };
 
-  // ✅ Helper to determine color based on fill level
-  const getBinColor = (fillLevel) => {
-    if (fillLevel === 0) return "#a0aec0"; // Gray (Empty)
-    if (fillLevel >= 90) return "#e53e3e"; // Red (Critical)
-    if (fillLevel >= 70) return "#dd6b20"; // Orange (Full)
-    return "#38a169"; // Green (Normal)
+  // ✅ MARK ALL READ: Syncs with backend
+  const handleMarkAllAsRead = async () => {
+    try {
+      const unread = notifications.filter((n) => !n.read && !n.isRead);
+      if (unread.length === 0) return;
+      await Promise.all(
+        unread.map((n) =>
+          axios.put(`http://localhost:8080/api/notifications/${n.id}/read`),
+        ),
+      );
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, read: true, isRead: true })),
+      );
+      setUnreadCount(0);
+    } catch (err) {
+      console.error("Failed to mark all as read:", err);
+    }
   };
 
-  // ✅ Fetch Current Route - OPTIMIZED
+  const getFacilityName = (lat, lon) => {
+    const facilities = {
+      "central-maintenance": [47.6101, -122.2015],
+      "south-renton": [47.4829, -122.2171],
+      "north-kirkland": [47.6815, -122.2087],
+      "east-issaquah": [47.5301, -122.0326],
+      "west-seattle": [47.5707, -122.3862],
+    };
+    let closest = "Central Maintenance Facility - Bellevue";
+    let minDist = Infinity;
+    for (const [name, coords] of Object.entries(facilities)) {
+      const dist = Math.sqrt((coords[0] - lat) ** 2 + (coords[1] - lon) ** 2);
+      if (dist < minDist) {
+        minDist = dist;
+        closest =
+          name === "central-maintenance"
+            ? "Central Maintenance Facility - Bellevue"
+            : name === "south-renton"
+              ? "South Depot - Renton"
+              : name === "north-kirkland"
+                ? "North Depot - Kirkland"
+                : name === "east-issaquah"
+                  ? "East Depot - Issaquah"
+                  : "West Depot - Seattle";
+      }
+    }
+    return closest;
+  };
+
+  const getBinColor = (fillLevel) => {
+    if (fillLevel === 0) return "#a0aec0";
+    if (fillLevel >= 90) return "#e53e3e";
+    if (fillLevel >= 70) return "#dd6b20";
+    return "#38a169";
+  };
+
+  const fetchRoadPath = async (routeBins, startCoords) => {
+    try {
+      const coords = [
+        `${startCoords[1]},${startCoords[0]}`,
+        ...routeBins.map(
+          (b) =>
+            `${b.longitude || b.location?.lon},${b.latitude || b.location?.lat}`,
+        ),
+      ];
+      const response = await axios.get(
+        `https://router.project-osrm.org/route/v1/driving/${coords.join(";")}?overview=full&geometries=geojson`,
+      );
+      if (response.data.routes?.length > 0) {
+        setRoadPath(
+          response.data.routes[0].geometry.coordinates.map((c) => [c[1], c[0]]),
+        );
+      }
+    } catch (err) {
+      console.error("Error fetching road path:", err);
+    }
+  };
+
   const fetchCurrentRoute = async () => {
     try {
       const auth = JSON.parse(localStorage.getItem("auth"));
       const driverId = auth?.employeeId;
-
       if (!driverId) {
         setError("Driver ID not found. Please login again.");
         setLoading(false);
         return;
       }
-
-      console.log("Fetching route for driver:", driverId);
-
-      // 1. Get the Route Entity (contains binIds, truckId, etc.)
-      // Note: Your backend returns a List<Route>. We take the first active one.
-      const routeResponse = await axios.get(
+      const routeRes = await axios.get(
         `http://localhost:8080/api/routes/driver/${driverId}`,
       );
-
-      const routesList = routeResponse.data;
-      if (!routesList || routesList.length === 0) {
+      const routesList = routeRes.data;
+      if (!routesList?.length) {
         setError("No active route assigned. Contact administrator.");
         setLoading(false);
         return;
       }
 
-      const routeData = routesList[0]; // Take the first active route
+      const routeData = routesList[0];
       setRoute(routeData);
 
-      // 2. Get ALL Bins (contains lat/lon for every bin in the system)
-      const binsResponse = await axios.get("http://localhost:8080/api/bins");
-      const allBins = binsResponse.data;
+      let stationStep = routeData.steps?.find(
+        (s) => s.type === "STATION" && s.action === "START",
+      );
+      if (stationStep) {
+        setDepotCoordinates([stationStep.lat, stationStep.lon]);
+        setDepotName(getFacilityName(stationStep.lat, stationStep.lon));
+      }
 
-      // 3. Match Route BinIDs with Actual Bin Data
-      // This creates a list of bins specifically for this route, with coordinates included
+      const binsRes = await axios.get("http://localhost:8080/api/bins");
       const routeBins = routeData.binIds
-        .map((binId) => {
-          return allBins.find((b) => b.binId === binId || b.id === binId);
-        })
-        .filter((bin) => bin !== undefined); // Remove any nulls if a bin was deleted
-
+        .map((id) => binsRes.data.find((b) => b.binId === id || b.id === id))
+        .filter(Boolean);
       setBins(routeBins);
+
+      const startCoords = stationStep
+        ? [stationStep.lat, stationStep.lon]
+        : [47.6101, -122.2015];
+      fetchRoadPath(routeBins, startCoords);
       setLoading(false);
     } catch (err) {
       console.error("Error fetching route:", err);
-      if (err.response?.status === 404) {
+      if (err.response?.status === 404)
         setError(
           "No route assigned. Contact administrator to generate a route.",
         );
-      } else if (err.response?.status === 401) {
+      else if (err.response?.status === 401) {
         setError("Unauthorized. Please login again.");
         localStorage.removeItem("auth");
         window.location.href = "/login";
-      } else {
-        setError("Failed to load route. Please try again.");
-      }
+      } else setError("Failed to load route. Please try again.");
       setLoading(false);
     }
   };
 
-  // ✅ Actual pickup logic (called after confirmation)
   const confirmPickup = async () => {
     try {
       const currentBin = bins[currentStopIndex];
-
-      // Note: You might need to adjust this endpoint to accept binId instead of MongoDB _id
-      // Or update your backend to find by binId
-      await axios.put(
-        `http://localhost:8080/api/routes/${route.id}/bins/${currentBin.id}/collect`,
-      );
-
-      // Reset fill level locally
-      const updatedBins = [...bins];
-      updatedBins[currentStopIndex] = { ...currentBin, fillLevel: 0 };
-      setBins(updatedBins);
-
-      // Move to next or finish
-      if (currentStopIndex < bins.length - 1) {
-        setCurrentStopIndex(currentStopIndex + 1);
-      } else {
-        setRouteCompleted(true);
+      const binId = currentBin.binId || currentBin.id;
+      if (!binId) {
+        alert("Error: Bin ID is missing!");
+        return;
       }
+      await axios.put(
+        `http://localhost:8080/api/routes/${route.id}/bins/${binId}/collect`,
+      );
+      const updated = [...bins];
+      updated[currentStopIndex] = { ...currentBin, fillLevel: 0 };
+      setBins(updated);
+      if (currentStopIndex < bins.length - 1)
+        setCurrentStopIndex(currentStopIndex + 1);
+      else setRouteCompleted(true);
     } catch (err) {
       console.error("Error confirming pickup:", err);
       alert("Failed to confirm pickup");
@@ -286,53 +348,80 @@ const DriverPage = () => {
     }
   };
 
-  const handleUnableToAccess = async () => {
+  // ✅ UNABLE TO ACCESS: Opens reason modal
+  const handleUnableToAccess = () => {
+    setSkipReason("");
+    setShowSkipModal(true);
+  };
+
+  // ✅ CONFIRM SKIP: Sends reason to backend & advances route
+  const confirmSkip = async () => {
     try {
       const currentBin = bins[currentStopIndex];
-      await axios.put(
-        `http://localhost:8080/api/routes/${route.id}/bins/${currentBin.id}/skip`,
-      );
-      if (currentStopIndex < bins.length - 1) {
-        setCurrentStopIndex(currentStopIndex + 1);
+      const binId = currentBin.binId || currentBin.id;
+      if (!binId || !route?.id) {
+        alert("Missing route or bin data.");
+        return;
       }
+
+      await axios.put(
+        `http://localhost:8080/api/routes/${route.id}/bins/${binId}/skip`,
+        {
+          reason: skipReason || "No reason provided",
+        },
+      );
+
+      if (currentStopIndex < bins.length - 1)
+        setCurrentStopIndex(currentStopIndex + 1);
+      else setRouteCompleted(true);
+
+      setShowSkipModal(false);
+      setSkipReason("");
+      alert("Stop skipped successfully.");
     } catch (err) {
       console.error("Error skipping bin:", err);
+      alert("Failed to skip stop. Check network/console.");
     }
   };
 
-  const openReportModal = () => {
-    setIssueText("");
-    setShowReportModal(true);
-  };
-
+  // ✅ REPORT: Routes EXCLUSIVELY to Admin
   const submitReport = async () => {
     if (!issueText.trim()) return;
     try {
-      const currentBin = bins[currentStopIndex];
-      await axios.put(
-        `http://localhost:8080/api/routes/${route.id}/bins/${currentBin.id}/report-issue`,
-        { description: issueText },
-      );
+      const auth = JSON.parse(localStorage.getItem("auth"));
+      const driverName = auth?.name || auth?.firstName || "Driver";
+      await axios.post("http://localhost:8080/api/notifications", {
+        title: `Issue Report from ${driverName}`,
+        message: issueText,
+        driverId: "ADMIN",
+        type: "ALERT",
+        isRead: false,
+        timestamp: new Date().toISOString(),
+      });
       alert("Issue reported successfully!");
       setShowReportModal(false);
+      setIssueText("");
     } catch (err) {
       console.error("Error reporting issue:", err);
-      alert("Failed to report issue");
+      alert("Failed to report issue.");
     }
   };
 
   const handleBack = () => {
     if (currentStopIndex > 0) setCurrentStopIndex(currentStopIndex - 1);
   };
-
   const handleNext = () => {
-    if (currentStopIndex < bins.length - 1) {
+    if (currentStopIndex < bins.length - 1)
       setCurrentStopIndex(currentStopIndex + 1);
-    }
   };
+  const getBinCoords = (bin) =>
+    bin.latitude && bin.longitude
+      ? [bin.latitude, bin.longitude]
+      : bin.location?.lat && bin.location?.lon
+        ? [bin.location.lat, bin.location.lon]
+        : null;
 
-  // Loading State
-  if (loading) {
+  if (loading)
     return (
       <div style={{ padding: "40px", textAlign: "center" }}>
         <div
@@ -345,14 +434,11 @@ const DriverPage = () => {
             animation: "spin 1s linear infinite",
             margin: "0 auto",
           }}
-        />
+        ></div>
         <p style={{ marginTop: "16px", color: "#4a5568" }}>Loading route...</p>
       </div>
     );
-  }
-
-  // Error State
-  if (error) {
+  if (error)
     return (
       <div style={{ padding: "40px", textAlign: "center" }}>
         <div style={{ fontSize: "48px", marginBottom: "16px" }}>🗺️</div>
@@ -362,16 +448,13 @@ const DriverPage = () => {
         <p style={{ color: "#718096", marginBottom: "24px" }}>{error}</p>
       </div>
     );
-  }
-
-  // ✅ Route Completion Screen
-  if (routeCompleted) {
+  if (routeCompleted)
     return (
       <div
         style={{
           backgroundColor: "white",
           minHeight: "100vh",
-          fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
+          fontFamily: "Segoe UI, sans-serif",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -399,10 +482,7 @@ const DriverPage = () => {
             }}
           >
             Great job! You've successfully collected all {bins.length} stops.
-            <br />
-            Total distance: {route?.totalDistance?.toFixed(1)} miles
           </p>
-
           <div
             style={{
               display: "flex",
@@ -425,7 +505,7 @@ const DriverPage = () => {
                 cursor: "pointer",
                 background: "#38a169",
                 color: "white",
-                boxShadow: "0 4px 6px rgba(56, 161, 105, 0.3)",
+                boxShadow: "0 4px 6px rgba(56,161,105,0.3)",
               }}
             >
               ✓ Logout
@@ -449,23 +529,18 @@ const DriverPage = () => {
         </div>
       </div>
     );
-  }
-
-  if (!route || bins.length === 0) {
+  if (!route || bins.length === 0)
     return (
       <div style={{ padding: "40px", textAlign: "center" }}>
         <p style={{ color: "#718096" }}>No Stops to Pick Up</p>
         <p style={{ color: "#718096" }}>Contact administrator.</p>
       </div>
     );
-  }
 
   const currentBin = bins[currentStopIndex];
-
-  // ✅ Route Path: Starts at Depot, then visits each bin in order
-  const routePath = [
+  const straightLinePath = [
     depotCoordinates,
-    ...bins.map((bin) => [bin.latitude, bin.longitude]),
+    ...bins.map(getBinCoords).filter(Boolean),
   ];
 
   return (
@@ -473,11 +548,11 @@ const DriverPage = () => {
       style={{
         backgroundColor: "white",
         minHeight: "100vh",
-        fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
+        fontFamily: "Segoe UI, sans-serif",
         padding: "0 12px",
       }}
     >
-      {/* Title Bar */}
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -528,22 +603,20 @@ const DriverPage = () => {
             →
           </div>
         </div>
-
-        <div
-          style={{
-            fontSize: "20px",
-            fontWeight: "600",
-            color: "#1a202c",
-            flex: 1,
-            textAlign: "center",
-          }}
-        >
-          Route #{route.routeNumber || "Today"}
+        {/* ✅ Improved Route Title */}
+        <div style={{ textAlign: "center", flex: 1 }}>
+          <div
+            style={{ fontSize: "20px", fontWeight: "600", color: "#1a202c" }}
+          >
+            {route.routeNumber
+              ? `Route #${route.routeNumber}`
+              : "Today's Collection"}
+          </div>
+          <div style={{ fontSize: "12px", color: "#718096", marginTop: "2px" }}>
+            {bins.length} stops • {depotName}
+          </div>
         </div>
-
-        {/* ✅ Header Actions - Notification Bell + Profile */}
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          {/* 🔔 Notification Bell - Using custom alertIcon */}
           <div ref={notificationRef} style={{ position: "relative" }}>
             <button
               onClick={() => setShowNotifications(!showNotifications)}
@@ -590,8 +663,6 @@ const DriverPage = () => {
                 </span>
               )}
             </button>
-
-            {/* Notification Dropdown */}
             {showNotifications && (
               <div
                 style={{
@@ -626,18 +697,12 @@ const DriverPage = () => {
                         fontSize: "12px",
                         cursor: "pointer",
                       }}
-                      onClick={() => {
-                        setNotifications((prev) =>
-                          prev.map((n) => ({ ...n, isRead: true })),
-                        );
-                        setUnreadCount(0);
-                      }}
+                      onClick={handleMarkAllAsRead}
                     >
                       Mark all read
                     </span>
                   )}
                 </div>
-
                 {notifications.length === 0 ? (
                   <div
                     style={{
@@ -668,7 +733,6 @@ const DriverPage = () => {
                         transition: "background 0.2s",
                       }}
                     >
-                      {/* DELETE BUTTON - Shows on hover */}
                       {hoveredNotifId === notif.id && (
                         <button
                           onClick={(e) => deleteNotification(notif.id, e)}
@@ -703,7 +767,6 @@ const DriverPage = () => {
                           ×
                         </button>
                       )}
-
                       <div
                         style={{
                           fontSize: "13px",
@@ -722,7 +785,10 @@ const DriverPage = () => {
                           marginBottom: "4px",
                         }}
                       >
-                        {notif.message}
+                        {notif.message ||
+                          notif.content ||
+                          notif.description ||
+                          "System update"}
                       </div>
                       <div style={{ fontSize: "11px", color: "#a0aec0" }}>
                         {new Date(notif.timestamp).toLocaleString()}
@@ -733,8 +799,6 @@ const DriverPage = () => {
               </div>
             )}
           </div>
-
-          {/* ✅ Driver Profile Circle - Now shows real initials */}
           <div
             onClick={() => {
               localStorage.removeItem("auth");
@@ -759,7 +823,7 @@ const DriverPage = () => {
         </div>
       </div>
 
-      {/* ✅ Map Section */}
+      {/* Map */}
       <div
         style={{
           height: "350px",
@@ -771,90 +835,54 @@ const DriverPage = () => {
         }}
       >
         <MapContainer
-          center={[47.6101, -122.2015]}
-          zoom={14}
+          center={depotCoordinates}
+          zoom={13}
           style={{ height: "100%", width: "100%" }}
         >
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           />
-
-          {/* ✅ Map Controller handles initial view and navigation (panTo) */}
           <MapController
             currentStop={currentBin}
             bins={bins}
             depotCoordinates={depotCoordinates}
           />
-
-          {/* Solid Blue Route Path (Starts at Depot → Bin 1 → Bin 2...) */}
-          {/* 1. Outer White Line (Road Background) */}
+          {bins.map((bin, i) => (
+            <CircleMarker
+              key={bin.id}
+              center={[bin.latitude, bin.longitude]}
+              radius={i === currentStopIndex ? 10 : 8}
+              fillColor={getBinColor(bin.fillLevel)}
+              color="#fff"
+              weight={2}
+              opacity={1}
+              fillOpacity={0.85}
+            >
+              <Popup>
+                <strong>{bin.binId}</strong>
+                <br />
+                {bin.locationName}
+                <br />
+                Fill: {bin.fillLevel}%
+              </Popup>
+            </CircleMarker>
+          ))}
           <Polyline
-            positions={routePath}
-            color="#ffffff"
-            weight={10}
-            opacity={0.9}
-            lineCap="round"
-            lineJoin="round"
-          />
-          {/* 2. Inner Blue Line (The Route) */}
-          <Polyline
-            positions={routePath}
+            positions={roadPath || straightLinePath}
             color="#3182ce"
             weight={6}
             opacity={0.9}
             lineCap="round"
             lineJoin="round"
           />
-
-          {/* Depot Marker (Where the driver starts) */}
-          <CircleMarker
-            center={depotCoordinates}
-            radius={8}
-            fillColor="#1a202c"
-            color="#fff"
-            weight={2}
-            opacity={1}
-            fillOpacity={0.9}
-          >
+          <Marker position={depotCoordinates} icon={depotIcon}>
             <Popup>
               <strong>🏢 Starting Depot</strong>
               <br />
-              Trashmasters, Inc Facility
+              {depotName}
             </Popup>
-          </CircleMarker>
-
-          {/* ✅ Render Bin Markers - FIXED: Current bin same style as others */}
-          {bins.map((bin, index) => {
-            const isCurrent = index === currentStopIndex;
-
-            // ✅ FIX: Same styling for ALL bins - just slightly bigger for current
-            const radius = isCurrent ? 10 : 8; // Slightly bigger for visibility
-            const color = getBinColor(bin.fillLevel); // ✅ Always use fill-level color
-            const weight = 2; // ✅ Same thin border for all bins
-            const fillOpacity = 0.85; // ✅ Same transparency for all bins
-
-            return (
-              <CircleMarker
-                key={bin.id}
-                center={[bin.latitude, bin.longitude]}
-                radius={radius}
-                fillColor={color}
-                color="#fff" // White border
-                weight={weight}
-                opacity={1}
-                fillOpacity={fillOpacity}
-              >
-                <Popup>
-                  <strong>{bin.binId}</strong>
-                  <br />
-                  {bin.locationName}
-                  <br />
-                  Fill: {bin.fillLevel}%
-                </Popup>
-              </CircleMarker>
-            );
-          })}
+          </Marker>
         </MapContainer>
       </div>
 
@@ -901,7 +929,6 @@ const DriverPage = () => {
             {currentStopIndex + 1} of {bins.length}
           </div>
         </div>
-
         <div
           style={{
             display: "grid",
@@ -955,11 +982,14 @@ const DriverPage = () => {
             <div
               style={{ fontSize: "18px", fontWeight: "600", color: "#1a202c" }}
             >
-              {route.totalDistance?.toFixed(1) || "0"} mi total
+              {(
+                route.totalDistance ||
+                calculateDistance(roadPath || straightLinePath)
+              ).toFixed(1)}{" "}
+              mi total
             </div>
           </div>
         </div>
-
         <div style={{ borderTop: "1px solid #edf2f7", paddingTop: "16px" }}>
           <div style={{ display: "flex", gap: "12px" }}>
             <div
@@ -967,7 +997,6 @@ const DriverPage = () => {
             >
               📍 Address:
             </div>
-            {/* ✅ Display actual bin address or location name */}
             <div style={{ fontSize: "14px", color: "#1a202c" }}>
               {currentBin?.address || currentBin?.locationName || "N/A"}
             </div>
@@ -987,7 +1016,7 @@ const DriverPage = () => {
         </div>
       </div>
 
-      {/* ✅ Action Buttons - Side by Side */}
+      {/* Action Buttons */}
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
         <button
           onClick={() => setShowConfirmModal(true)}
@@ -1022,7 +1051,10 @@ const DriverPage = () => {
           Unable to Access
         </button>
         <button
-          onClick={openReportModal}
+          onClick={() => {
+            setIssueText("");
+            setShowReportModal(true);
+          }}
           style={{
             flex: 1,
             padding: "12px 8px",
@@ -1038,7 +1070,6 @@ const DriverPage = () => {
           ⚠️ Report Issue
         </button>
       </div>
-
       <div
         style={{
           textAlign: "center",
@@ -1050,7 +1081,7 @@ const DriverPage = () => {
         Use ← → arrow keys or tap buttons to navigate stops
       </div>
 
-      {/* ✅ Confirm Pickup Modal */}
+      {/* Modals */}
       {showConfirmModal && (
         <div
           style={{
@@ -1133,7 +1164,105 @@ const DriverPage = () => {
         </div>
       )}
 
-      {/* ✅ Report Issue Modal */}
+      {showSkipModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+          onClick={() => setShowSkipModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: "white",
+              padding: "24px",
+              borderRadius: "12px",
+              width: "90%",
+              maxWidth: "400px",
+              boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              style={{ marginTop: 0, color: "#1a202c", marginBottom: "16px" }}
+            >
+              Unable to Access Bin
+            </h3>
+            <p
+              style={{
+                fontSize: "14px",
+                color: "#4a5568",
+                marginBottom: "12px",
+              }}
+            >
+              Please provide a reason for skipping{" "}
+              <strong>{bins[currentStopIndex]?.binId}</strong>:
+            </p>
+            <textarea
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: "6px",
+                border: "1px solid #cbd5e0",
+                fontSize: "14px",
+                minHeight: "80px",
+                boxSizing: "border-box",
+                marginBottom: "16px",
+                fontFamily: "inherit",
+                resize: "vertical",
+              }}
+              placeholder="e.g., Blocked by vehicle, locked gate, construction..."
+              value={skipReason}
+              onChange={(e) => setSkipReason(e.target.value)}
+            ></textarea>
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={() => setShowSkipModal(false)}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "6px",
+                  border: "1px solid #e2e8f0",
+                  background: "white",
+                  color: "#4a5568",
+                  cursor: "pointer",
+                  fontWeight: "600",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSkip}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "#dd6b20",
+                  color: "white",
+                  cursor: "pointer",
+                  fontWeight: "600",
+                }}
+              >
+                Skip Stop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReportModal && (
         <div
           style={{
@@ -1156,27 +1285,26 @@ const DriverPage = () => {
               padding: "24px",
               borderRadius: "12px",
               width: "90%",
-              maxWidth: "400px",
+              maxWidth: "500px",
               boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3
-              style={{ marginTop: 0, color: "#1a202c", marginBottom: "16px" }}
+              style={{ marginTop: 0, marginBottom: "16px", color: "#2d3748" }}
             >
-              Report Issue
+              ⚠️ Report an Issue
             </h3>
             <p
               style={{
                 fontSize: "14px",
                 color: "#4a5568",
-                marginBottom: "12px",
+                marginBottom: "16px",
               }}
             >
-              Reporting issue for{" "}
-              <strong>{bins[currentStopIndex]?.binId}</strong>:
+              Describe any issue you're experiencing (vehicle, route, equipment,
+              etc.):
             </p>
-
             <textarea
               style={{
                 width: "100%",
@@ -1184,16 +1312,16 @@ const DriverPage = () => {
                 borderRadius: "6px",
                 border: "1px solid #cbd5e0",
                 fontSize: "14px",
-                minHeight: "100px",
+                minHeight: "120px",
                 boxSizing: "border-box",
                 marginBottom: "16px",
                 fontFamily: "inherit",
+                resize: "vertical",
               }}
-              placeholder="Describe the issue (e.g., bin damaged, blocked, overflow)..."
+              placeholder="Please describe the issue in detail..."
               value={issueText}
               onChange={(e) => setIssueText(e.target.value)}
-            />
-
+            ></textarea>
             <div
               style={{
                 display: "flex",

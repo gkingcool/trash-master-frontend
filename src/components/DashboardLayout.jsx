@@ -13,6 +13,8 @@ import logoIcon from "../assets/icons/recycling-icon.png";
 import bellIcon from "../assets/icons/bell-icon.png";
 import binsIcon from "../assets/icons/bins.png";
 import trucksIcon from "../assets/icons/trucks-icon.png";
+import sensor from "../assets/icons/sensor.png";
+
 const getCurrentUser = () => {
   try {
     const auth = JSON.parse(localStorage.getItem("auth"));
@@ -57,6 +59,7 @@ export default function DashboardLayout() {
       "/trucks": "Fleet Management",
       "/route-status": "Route Status",
       "/deployments": "Deployments",
+      "/sensors": "Sensors",
       "/settings": "Settings",
     };
     return titles[location.pathname] || "Dashboard";
@@ -160,6 +163,15 @@ export default function DashboardLayout() {
               >
                 <img src={binsIcon} alt="Bins" />
                 <span>Bins</span>
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/sensors"
+                className={`nav-link ${isActive("/sensors") ? "active" : ""}`}
+              >
+                <img src={sensor} alt="Sensor" />
+                <span>Sensors</span>
               </Link>
             </li>
             <li>

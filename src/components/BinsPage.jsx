@@ -15,7 +15,6 @@ const BinsPage = () => {
   const [filterStatus, setFilterStatus] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // ✅ Address autocomplete states
   const [addressInput, setAddressInput] = useState("");
   const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -29,25 +28,27 @@ const BinsPage = () => {
     depthCm: "100",
     fillLevel: "0",
     sensorId: "",
-    capacityYards: "6", // ✅ Default to 6 yards to pass backend validation
+    capacityYards: "6",
   });
 
-  // ✅ Helper to safely extract coordinates from either flat or nested structure
   const getBinCoordinates = (bin) => {
-    if (bin.latitude != null && bin.longitude != null) {
+    if (bin.latitude != null && bin.longitude != null)
       return [bin.latitude, bin.longitude];
-    }
-    if (bin.location && bin.location.lat != null && bin.location.lon != null) {
+    if (bin.location && bin.location.lat != null && bin.location.lon != null)
       return [bin.location.lat, bin.location.lon];
-    }
     return null;
   };
 
-  // Fetch bins from backend
   useEffect(() => {
     fetchBins();
-    const interval = setInterval(fetchBins, 30000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchBins, 15000);
+    const handleSensorAssigned = () => fetchBins();
+    window.addEventListener("sensorAssigned", handleSensorAssigned);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("sensorAssigned", handleSensorAssigned);
+    };
   }, []);
 
   const fetchBins = async () => {
@@ -69,7 +70,6 @@ const BinsPage = () => {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // ✅ Search for address suggestions using Photon API (CORS-friendly)
   const searchAddressSuggestions = async (query) => {
     if (query.length < 3) {
       setAddressSuggestions([]);
@@ -92,7 +92,6 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ Handle address input change
   const handleAddressChange = (e) => {
     const value = e.target.value;
     setAddressInput(value);
@@ -106,7 +105,6 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ Handle address suggestion click
   const handleAddressSelect = (suggestion) => {
     setFormData({
       ...formData,
@@ -119,7 +117,6 @@ const BinsPage = () => {
     setShowSuggestions(false);
   };
 
-  // ✅ CREATE BIN
   const handleAddBin = async (e) => {
     e.preventDefault();
     if (!formData.latitude || !formData.longitude) {
@@ -127,7 +124,6 @@ const BinsPage = () => {
       return;
     }
     try {
-      // ✅ UPDATED: Send nested location object AND capacityYards to match new backend DTO
       await axios.post(`${API_BASE_URL}/createBin`, {
         binId: formData.binId,
         locationName: formData.locationName,
@@ -140,9 +136,8 @@ const BinsPage = () => {
         sensorId: formData.sensorId || null,
         capacityYards: formData.capacityYards
           ? parseInt(formData.capacityYards)
-          : 6, // ✅ Ensure capacity is sent
+          : 6,
       });
-
       setShowAddModal(false);
       setFormData({
         binId: "",
@@ -152,7 +147,7 @@ const BinsPage = () => {
         depthCm: "100",
         fillLevel: "0",
         sensorId: "",
-        capacityYards: "6", // Reset to default
+        capacityYards: "6",
       });
       setAddressInput("");
       setAddressSuggestions([]);
@@ -165,11 +160,9 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ UPDATE BIN
   const handleUpdateBin = async (e) => {
     e.preventDefault();
     try {
-      // ✅ UPDATED: Send nested location object AND capacityYards
       await axios.put(`${API_BASE_URL}/${selectedBin.binId}`, {
         binId: formData.binId,
         locationName: formData.locationName,
@@ -182,9 +175,8 @@ const BinsPage = () => {
         sensorId: formData.sensorId || null,
         capacityYards: formData.capacityYards
           ? parseInt(formData.capacityYards)
-          : 6, // ✅ Ensure capacity is sent
+          : 6,
       });
-
       setShowEditModal(false);
       setSelectedBin(null);
       fetchBins();
@@ -196,7 +188,6 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ DELETE BIN
   const handleDeleteBin = async () => {
     try {
       await axios.delete(`${API_BASE_URL}/${showDeleteConfirm.binId}`);
@@ -208,33 +199,57 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ FLAG BIN
+  // ✅ FLAG BIN + SEND ALERT TO DRIVERS
   const handleFlagBin = async (binId, issue) => {
     try {
       await axios.put(`${API_BASE_URL}/${binId}/flag`, {
         flagged: true,
         issue: issue || "Manual flag by admin",
       });
+      try {
+        await axios.post("http://localhost:8080/api/notifications", {
+          title: "Bin Flagged Alert",
+          message: `${binId} gets flagged. The bin has issues.`,
+          type: "ALERT",
+          driverId: "DRIVER_ALERT",
+          isRead: false,
+        });
+      } catch (notifErr) {
+        console.warn("Bin flagged, but failed to send notification:", notifErr);
+      }
       fetchBins();
     } catch (err) {
       alert("Failed to flag bin: " + err.message);
     }
   };
 
-  // ✅ UNFLAG BIN
+  // ✅ UNFLAG BIN + SEND RESOLUTION ALERT TO DRIVERS
   const handleUnflagBin = async (binId) => {
     try {
       await axios.put(`${API_BASE_URL}/${binId}/flag`, {
         flagged: false,
         issue: null,
       });
+      try {
+        await axios.post("http://localhost:8080/api/notifications", {
+          title: "Bin Unflagged",
+          message: `${binId} gets unflagged. The bin issue has been resolved.`,
+          type: "SUCCESS",
+          driverId: "DRIVER_ALERT",
+          isRead: false,
+        });
+      } catch (notifErr) {
+        console.warn(
+          "Bin unflagged, but failed to send notification:",
+          notifErr,
+        );
+      }
       fetchBins();
     } catch (err) {
       alert("Failed to unflag bin: " + err.message);
     }
   };
 
-  // ✅ OPEN EDIT MODAL
   const handleEditBin = (bin) => {
     setSelectedBin(bin);
     const coords = getBinCoordinates(bin);
@@ -246,7 +261,7 @@ const BinsPage = () => {
       depthCm: bin.depthCm?.toString() || "100",
       fillLevel: bin.fillLevel?.toString() || "0",
       sensorId: bin.sensorId || "",
-      capacityYards: bin.capacityYards?.toString() || "6", // ✅ Load existing capacity
+      capacityYards: bin.capacityYards?.toString() || "6",
     });
     setAddressInput(bin.locationName);
     setShowEditModal(true);
@@ -265,7 +280,7 @@ const BinsPage = () => {
       bin.binId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bin.locationName?.toLowerCase().includes(searchTerm.toLowerCase());
     if (filterStatus === "all") return matchesSearch;
-    if (filterStatus === "flagged") return matchesSearch && bin.isFlagged;
+    if (filterStatus === "flagged") return matchesSearch && bin.flagged;
     if (filterStatus === "critical")
       return matchesSearch && bin.fillLevel >= 90;
     if (filterStatus === "full")
@@ -273,90 +288,30 @@ const BinsPage = () => {
     return matchesSearch;
   });
 
-  if (loading) {
+  if (loading)
     return (
       <div style={{ padding: "40px", textAlign: "center" }}>
         <div style={{ fontSize: "24px", marginBottom: "16px" }}>⏳</div>
         <p style={{ color: "#4a5568" }}>Loading bins...</p>
       </div>
     );
-  }
-
-  if (error) {
+  if (error)
     return (
       <div style={{ padding: "40px", textAlign: "center", color: "#e53e3e" }}>
         <div style={{ fontSize: "24px", marginBottom: "16px" }}>⚠️</div>
         {error}
       </div>
     );
-  }
 
   return (
     <div className="bins-page">
-      <style>{`
-        .bins-page { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #f8fafc; min-height: 100vh; } 
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; } 
-        .page-header h1 { font-size: 24px; color: #1a202c; font-weight: 700; margin: 0; } 
-        .btn-primary { background: #38a169; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; } 
-        .btn-primary:hover { background: #2f855a; } 
-        .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; } 
-        .search-input { padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; width: 240px; } 
-        .filter-btn { padding: 6px 12px; border: 1px solid #cbd5e0; background: white; border-radius: 4px; cursor: pointer; } 
-        .filter-btn.active { background: #38a169; color: white; } 
-        .bins-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; } 
-        .bin-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid #38a169; } 
-        .bin-card.flagged { border-left-color: #e53e3e; } 
-        .bin-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; } 
-        .bin-id { font-weight: 600; color: #1a202c; } 
-        .bin-location { color: #4a5568; font-size: 14px; margin-bottom: 8px; } 
-        .fill-bar { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin: 8px 0; } 
-        .fill-level { height: 100%; border-radius: 4px; transition: width 0.3s; } 
-        .bin-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; font-size: 13px; } 
-        .bin-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; } 
-        .btn-small { padding: 4px 12px; font-size: 12px; border-radius: 4px; border: none; cursor: pointer; } 
-        .btn-flag { background: #fed7d7; color: #e53e3e; } 
-        .btn-unflag { background: #c6f6d5; color: #38a169; } 
-        .btn-details { background: #bee3f8; color: #3182ce; } 
-        .btn-delete { background: #fed7d7; color: #e53e3e; } 
-        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; } 
-        .modal-content { background: white; padding: 24px; border-radius: 8px; width: 400px; max-width: 90vw; } 
-        .form-group { margin-bottom: 16px; } 
-        .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #4a5568; } 
-        .form-group input { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; } 
-        .form-group input:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.2); } 
-        .modal-buttons { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; } 
-        .btn-secondary { background: #e2e8f0; color: #4a5568; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; } 
-        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; } 
-        .status-flagged { background: #fed7d7; color: #e53e3e; } 
-        .status-critical { background: #fed7d7; color: #e53e3e; } 
-        .status-full { background: #feebc8; color: #dd6b20; } 
-        .status-normal { background: #c6f6d5; color: #38a169; } 
-        .delete-modal-icon { width: 64px; height: 64px; background: #fed7d7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; } 
-        .delete-modal-title { text-align: center; color: #1a202c; font-size: 20px; font-weight: 600; margin-bottom: 8px; } 
-        .delete-modal-message { text-align: center; color: #4a5568; font-size: 14px; line-height: 1.6; margin-bottom: 24px; } 
-        .delete-modal-buttons { display: flex; gap: 12px; justify-content: center; } 
-        .btn-delete-confirm { background: #e53e3e; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } 
-        .btn-cancel { background: #edf2f7; color: #4a5568; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } 
-        .no-bins { grid-column: 1 / -1; text-align: center; color: #718096; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; width: 100%; padding: 40px 20px; } 
-        .no-bins-icon { font-size: 80px; margin-bottom: 24px; opacity: 0.5; } 
-        .address-search-container { position: relative; } 
-        .address-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #cbd5e0; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 4px; } 
-        .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #edf2f7; font-size: 14px; } 
-        .suggestion-item:hover { background: #f8fafc; } 
-        .suggestion-item:last-child { border-bottom: none; } 
-        .geocoding-indicator { display: inline-block; width: 12px; height: 12px; border: 2px solid #cbd5e0; border-top-color: #38a169; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 8px; vertical-align: middle; } 
-        @keyframes spin { to { transform: rotate(360deg); } } 
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } 
-        .helper-text { font-size: 12px; color: #718096; margin-top: 4px; }
-      `}</style>
-
+      <style>{`.bins-page { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #f8fafc; min-height: 100vh; } .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; } .page-header h1 { font-size: 24px; color: #1a202c; font-weight: 700; margin: 0; } .btn-primary { background: #38a169; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; } .btn-primary:hover { background: #2f855a; } .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; } .search-input { padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; width: 240px; } .filter-btn { padding: 6px 12px; border: 1px solid #cbd5e0; background: white; border-radius: 4px; cursor: pointer; } .filter-btn.active { background: #38a169; color: white; } .bins-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; } .bin-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid #38a169; } .bin-card.flagged { border-left-color: #e53e3e; } .bin-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; } .bin-id { font-weight: 600; color: #1a202c; } .bin-location { color: #4a5568; font-size: 14px; margin-bottom: 8px; } .fill-bar { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin: 8px 0; } .fill-level { height: 100%; border-radius: 4px; transition: width 0.3s; } .bin-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; font-size: 13px; } .bin-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; } .btn-small { padding: 4px 12px; font-size: 12px; border-radius: 4px; border: none; cursor: pointer; } .btn-flag { background: #fed7d7; color: #e53e3e; } .btn-unflag { background: #c6f6d5; color: #38a169; } .btn-details { background: #bee3f8; color: #3182ce; } .btn-delete { background: #fed7d7; color: #e53e3e; } .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; } .modal-content { background: white; padding: 24px; border-radius: 8px; width: 400px; max-width: 90vw; } .form-group { margin-bottom: 16px; } .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #4a5568; } .form-group input { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; } .form-group input:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.2); } .modal-buttons { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; } .btn-secondary { background: #e2e8f0; color: #4a5568; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; } .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; } .status-flagged { background: #fed7d7; color: #e53e3e; } .status-critical { background: #fed7d7; color: #e53e3e; } .status-full { background: #feebc8; color: #dd6b20; } .status-normal { background: #c6f6d5; color: #38a169; } .delete-modal-icon { width: 64px; height: 64px; background: #fed7d7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; } .delete-modal-title { text-align: center; color: #1a202c; font-size: 20px; font-weight: 600; margin-bottom: 8px; } .delete-modal-message { text-align: center; color: #4a5568; font-size: 14px; line-height: 1.6; margin-bottom: 24px; } .delete-modal-buttons { display: flex; gap: 12px; justify-content: center; } .btn-delete-confirm { background: #e53e3e; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } .btn-cancel { background: #edf2f7; color: #4a5568; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } .no-bins { grid-column: 1 / -1; text-align: center; color: #718096; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; width: 100%; padding: 40px 20px; } .no-bins-icon { font-size: 80px; margin-bottom: 24px; opacity: 0.5; } .address-search-container { position: relative; } .address-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #cbd5e0; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 4px; } .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #edf2f7; font-size: 14px; } .suggestion-item:hover { background: #f8fafc; } .suggestion-item:last-child { border-bottom: none; } .geocoding-indicator { display: inline-block; width: 12px; height: 12px; border: 2px solid #cbd5e0; border-top-color: #38a169; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 8px; vertical-align: middle; } @keyframes spin { to { transform: rotate(360deg); } } .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .helper-text { font-size: 12px; color: #718096; margin-top: 4px; }`}</style>
       <div className="page-header">
         <h1>Bin Management</h1>
         <button className="btn-primary" onClick={() => setShowAddModal(true)}>
           + Add Bin
         </button>
       </div>
-
       <div className="filters">
         <input
           type="text"
@@ -390,7 +345,6 @@ const BinsPage = () => {
           Full (70%+)
         </button>
       </div>
-
       <div className="bins-grid">
         {filteredBins.length === 0 ? (
           <div className="no-bins">
@@ -430,37 +384,31 @@ const BinsPage = () => {
           filteredBins.map((bin) => (
             <div
               key={bin.id || bin.binId}
-              className={`bin-card ${bin.isFlagged ? "flagged" : ""}`}
+              className={`bin-card ${bin.flagged ? "flagged" : ""}`}
             >
               <div className="bin-header">
                 <div>
                   <div className="bin-id">{bin.binId}</div>
                   <div className="bin-location">📍 {bin.locationName}</div>
                 </div>
-                {bin.isFlagged && (
+                {bin.flagged && (
                   <span className="status-badge status-flagged">⚠ Flagged</span>
                 )}
-                {!bin.isFlagged && bin.fillLevel >= 90 && (
+                {!bin.flagged && bin.fillLevel >= 90 && (
                   <span className="status-badge status-critical">
                     🔴 Critical
                   </span>
                 )}
-                {!bin.isFlagged &&
-                  bin.fillLevel >= 70 &&
-                  bin.fillLevel < 90 && (
-                    <span className="status-badge status-full">🟡 Full</span>
-                  )}
+                {!bin.flagged && bin.fillLevel >= 70 && bin.fillLevel < 90 && (
+                  <span className="status-badge status-full">🟡 Full</span>
+                )}
               </div>
-
               <div className="fill-bar">
                 <div
                   className="fill-level"
                   style={{
                     width: `${bin.fillLevel || 0}%`,
-                    backgroundColor: getStatusColor(
-                      bin.fillLevel,
-                      bin.isFlagged,
-                    ),
+                    backgroundColor: getStatusColor(bin.fillLevel, bin.flagged),
                   }}
                 ></div>
               </div>
@@ -473,7 +421,6 @@ const BinsPage = () => {
               >
                 {bin.fillLevel || 0}% full
               </div>
-
               <div className="bin-stats">
                 <div>📏 Depth: {bin.depthCm}cm</div>
                 <div>🔋 Sensor: {bin.sensorId || "N/A"}</div>
@@ -492,10 +439,8 @@ const BinsPage = () => {
                       : "N/A";
                   })()}
                 </div>
-                {/* ✅ Display Capacity */}
                 <div>📦 Cap: {bin.capacityYards || "N/A"} yds</div>
               </div>
-
               <div className="bin-actions">
                 <button
                   className="btn-small btn-details"
@@ -503,7 +448,7 @@ const BinsPage = () => {
                 >
                   ✏️ Edit
                 </button>
-                {!bin.isFlagged ? (
+                {!bin.flagged ? (
                   <button
                     className="btn-small btn-flag"
                     onClick={() => handleFlagBin(bin.binId)}
@@ -529,8 +474,7 @@ const BinsPage = () => {
           ))
         )}
       </div>
-
-      {/* Add Bin Modal */}
+      {/* Modals omitted for brevity - keep your existing Add/Edit/Delete modals exactly as they are */}
       {showAddModal && (
         <div className="modal" onClick={() => setShowAddModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -546,7 +490,6 @@ const BinsPage = () => {
                   placeholder="e.g., BEL-BIN-023"
                 />
               </div>
-
               <div className="form-group">
                 <label>
                   Address / Location *
@@ -578,7 +521,6 @@ const BinsPage = () => {
                   Start typing an address and select from suggestions
                 </p>
               </div>
-
               <div className="form-row">
                 <div className="form-group">
                   <label>Latitude</label>
@@ -603,7 +545,6 @@ const BinsPage = () => {
                   />
                 </div>
               </div>
-
               <div className="form-row">
                 <div className="form-group">
                   <label>Depth (cm)</label>
@@ -628,8 +569,6 @@ const BinsPage = () => {
                   />
                 </div>
               </div>
-
-              {/* ✅ NEW: Capacity Field */}
               <div className="form-group">
                 <label>Capacity (Yards) *</label>
                 <input
@@ -644,7 +583,6 @@ const BinsPage = () => {
                 />
                 <p className="helper-text">Must be between 2 and 8 yards.</p>
               </div>
-
               <div className="form-group">
                 <label>Sensor ID</label>
                 <input
@@ -654,7 +592,6 @@ const BinsPage = () => {
                   placeholder="e.g., SENSOR-X99"
                 />
               </div>
-
               <div className="modal-buttons">
                 <button
                   type="button"
@@ -671,8 +608,6 @@ const BinsPage = () => {
           </div>
         </div>
       )}
-
-      {/* Edit Bin Modal */}
       {showEditModal && (
         <div className="modal" onClick={() => setShowEditModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -688,7 +623,6 @@ const BinsPage = () => {
                   disabled
                 />
               </div>
-
               <div className="form-group">
                 <label>Address / Location *</label>
                 <div className="address-search-container">
@@ -714,7 +648,6 @@ const BinsPage = () => {
                   )}
                 </div>
               </div>
-
               <div className="form-row">
                 <div className="form-group">
                   <label>Latitude</label>
@@ -737,7 +670,6 @@ const BinsPage = () => {
                   />
                 </div>
               </div>
-
               <div className="form-row">
                 <div className="form-group">
                   <label>Depth (cm)</label>
@@ -760,8 +692,6 @@ const BinsPage = () => {
                   />
                 </div>
               </div>
-
-              {/* ✅ NEW: Capacity Field */}
               <div className="form-group">
                 <label>Capacity (Yards) *</label>
                 <input
@@ -775,7 +705,6 @@ const BinsPage = () => {
                 />
                 <p className="helper-text">Must be between 2 and 8 yards.</p>
               </div>
-
               <div className="form-group">
                 <label>Sensor ID</label>
                 <input
@@ -784,7 +713,6 @@ const BinsPage = () => {
                   onChange={handleInputChange}
                 />
               </div>
-
               <div className="modal-buttons">
                 <button
                   type="button"
@@ -801,8 +729,6 @@ const BinsPage = () => {
           </div>
         </div>
       )}
-
-      {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="modal" onClick={() => setShowDeleteConfirm(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -810,7 +736,7 @@ const BinsPage = () => {
             <h3 className="delete-modal-title">Delete Bin?</h3>
             <p className="delete-modal-message">
               Are you sure you want to delete bin{" "}
-              <strong>{showDeleteConfirm.binId}</strong>? <br />
+              <strong>{showDeleteConfirm.binId}</strong>?<br />
               This action cannot be undone.
             </p>
             <div className="delete-modal-buttons">
@@ -830,5 +756,4 @@ const BinsPage = () => {
     </div>
   );
 };
-
 export default BinsPage;

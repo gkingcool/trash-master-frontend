@@ -6,21 +6,25 @@ import {
   CircleMarker,
   Popup,
   Polyline,
+  Marker,
   useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import axios from "axios";
+
 // Fix Leaflet marker icons
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
+
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
 });
+
 // Depot coordinates for each starting location
 const DEPOT_COORDINATES = {
   "central-maintenance": [47.6101, -122.2015],
@@ -29,6 +33,19 @@ const DEPOT_COORDINATES = {
   "east-issaquah": [47.5301, -122.0326],
   "west-seattle": [47.5707, -122.3862],
 };
+
+// Custom Depot Icon (Standard Leaflet Pin)
+const depotIcon = L.icon({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIcon2x,
+  shadowUrl: markerShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  tooltipAnchor: [16, -28],
+  shadowSize: [41, 41],
+});
+
 // Map Controller Component
 function MapController({ bins }) {
   const map = useMap();
@@ -104,6 +121,9 @@ const AdminRoutePlanner = () => {
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [maxDrivers, setMaxDrivers] = useState(9);
 
+  // ✅ NEW: State to store road-based route coordinates
+  const [roadRoutes, setRoadRoutes] = useState({});
+
   // Helper to get marker color
   const getBinFillColor = (fillLevel, isFlagged) => {
     if (isFlagged) return "#e53e3e";
@@ -114,26 +134,92 @@ const AdminRoutePlanner = () => {
     return "#718096";
   };
 
-  // // Auto-load bins, drivers, and latest routes on mount
-  // useEffect(() => {
-  //   const now = new Date();
-  //   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  //   setRouteDateTime(now.toISOString().slice(0, 16));
-  //   fetchBins();
-  //   fetchDrivers();
-  //   fetchLatestRoutes();
-  // }, []);
+  // ✅ NEW: Function to fetch road path from OSRM
+  const fetchRoadRoute = async (coordinates) => {
+    try {
+      // OSRM expects coordinates as lon,lat
+      const coordsString = coordinates
+        .map((coord) => `${coord[1]},${coord[0]}`)
+        .join(";");
+
+      const response = await axios.get(
+        `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`,
+      );
+
+      if (response.data.routes && response.data.routes.length > 0) {
+        // OSRM returns [lon, lat], we need [lat, lon] for Leaflet
+        return response.data.routes[0].geometry.coordinates.map((coord) => [
+          coord[1],
+          coord[0],
+        ]);
+      }
+    } catch (err) {
+      console.error("Error fetching road route from OSRM:", err);
+    }
+    return null;
+  };
+
+  // ✅ NEW: Fetch road paths for all generated routes
+  const fetchAllRoadRoutes = async (routes) => {
+    const newRoadRoutes = {};
+
+    for (const route of routes) {
+      const coords = getRouteCoordinates(route);
+      if (coords.length > 1) {
+        const path = await fetchRoadRoute(coords);
+        if (path) {
+          newRoadRoutes[route.id || route.truckId] = path;
+        }
+      }
+    }
+
+    setRoadRoutes(newRoadRoutes);
+  };
+
+  // Add this helper function
+  const getDepotFromCoordinates = (lat, lon) => {
+    const thresholds = {
+      "central-maintenance": [47.6101, -122.2015],
+      "south-renton": [47.4829, -122.2171],
+      "north-kirkland": [47.6815, -122.2087],
+      "east-issaquah": [47.5301, -122.0326],
+      "west-seattle": [47.5707, -122.3862],
+    };
+
+    let closestDepot = "central-maintenance";
+    let minDistance = Infinity;
+
+    for (const [depotName, coords] of Object.entries(thresholds)) {
+      const distance = Math.sqrt(
+        Math.pow(coords[0] - lat, 2) + Math.pow(coords[1] - lon, 2),
+      );
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestDepot = depotName;
+      }
+    }
+
+    return closestDepot;
+  };
+
+  // Auto-load bins, drivers, and latest routes on mount
   useEffect(() => {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
     const formattedDateTime = now.toISOString().slice(0, 16);
     const formattedDate = formattedDateTime.split("T")[0];
-
     setRouteDateTime(formattedDateTime);
     fetchBins();
     fetchDrivers();
-    fetchRoutesByDate(formattedDate); // Fetch immediately with correct date
+    fetchRoutesByDate(formattedDate);
   }, []);
+
+  // ✅ NEW: Trigger road route fetching when routes change
+  useEffect(() => {
+    if (generatedRoutes.length > 0) {
+      fetchAllRoadRoutes(generatedRoutes);
+    }
+  }, [generatedRoutes]);
 
   const fetchRoutesByDate = async (date) => {
     try {
@@ -142,10 +228,25 @@ const AdminRoutePlanner = () => {
         `http://localhost:8080/api/routes/by-date/${date}`,
       );
       console.log("✅ Fetched routes:", response.data.length);
-      setGeneratedRoutes(response.data || []);
+
+      const routes = response.data || [];
+      setGeneratedRoutes(routes);
+
+      // ✅ Update startingDepot based on the first route's depot
+      if (routes.length > 0 && routes[0].steps && routes[0].steps.length > 0) {
+        const firstStep = routes[0].steps[0]; // First step should be the depot
+        if (firstStep.lat && firstStep.lon) {
+          const detectedDepot = getDepotFromCoordinates(
+            firstStep.lat,
+            firstStep.lon,
+          );
+          setStartingDepot(detectedDepot);
+          console.log("📍 Detected depot from saved route:", detectedDepot);
+        }
+      }
     } catch (err) {
       console.error("Error fetching routes:", err);
-      setGeneratedRoutes([]);
+      setError("Failed to load saved routes. Is MongoDB running?");
     }
   };
 
@@ -175,20 +276,6 @@ const AdminRoutePlanner = () => {
     }
   };
 
-  const fetchLatestRoutes = async () => {
-    try {
-      const selectedDate = routeDateTime.split("T")[0];
-      const response = await axios.get(
-        `http://localhost:8080/api/routes/by-date/${selectedDate}`,
-      );
-      // Clear existing routes on load so we don't show stale data before generation
-      setGeneratedRoutes([]);
-    } catch (err) {
-      console.error("Error fetching latest routes:", err);
-      setGeneratedRoutes([]);
-    }
-  };
-
   const handleGenerateRoutes = async () => {
     setLoading(true);
     setError(null);
@@ -208,32 +295,35 @@ const AdminRoutePlanner = () => {
 
       console.log("Requesting routes for ", driversAvailable, " drivers ");
 
-      // ✅ Call the correct backend endpoint /api/routes/generate
-      // The backend expects query params: trucks, date, time
+      const depotCoords =
+        DEPOT_COORDINATES[startingDepot] ||
+        DEPOT_COORDINATES["central-maintenance"];
+
       const response = await axios.post(
         `http://localhost:8080/api/routes/generate`,
-        null, // No body needed for POST when using Query Params
+        null,
         {
           params: {
             trucks: driversAvailable,
-            date: routeDateTime.split("T")[0], // Extract YYYY-MM-DD
-            time: routeDateTime.split("T")[1] || "07:00", // Extract HH:mm
+            date: routeDateTime.split("T")[0],
+            time: routeDateTime.split("T")[1] || "07:00",
             strategy: strategy,
+            depotLat: depotCoords[0], // ✅ Send depot latitude
+            depotLon: depotCoords[1], // ✅ Send depot longitude
+            shiftDuration: shiftDuration,
           },
         },
       );
 
-      console.log("📤 Sending strategy:", strategy);
+      console.log("📤 Sending strategy: ", strategy);
       console.log("Backend response: ", response.data);
 
-      // ✅ Parse the GenerateRoutesResponse object
       const generatedRoutesList = response.data.routes || [];
       const urgentBins = response.data.urgentUnassignedBins || [];
 
       setGeneratedRoutes(generatedRoutesList);
       setUnassignedBins(urgentBins);
 
-      // ✅ After generating, fetch from DB to ensure persistence
       const selectedDate = routeDateTime.split("T")[0];
       await fetchRoutesByDate(selectedDate);
 
@@ -267,24 +357,17 @@ const AdminRoutePlanner = () => {
     return colors[index % colors.length];
   };
 
-  // ✅ UPDATED: Extract coordinates directly from RouteDTO steps provided by Backend
   const getRouteCoordinates = (routeDto) => {
     if (!routeDto || !routeDto.steps) {
       console.warn("⚠️ No steps found in route:", routeDto);
       return [];
     }
-
     const depotCoords =
       DEPOT_COORDINATES[startingDepot] ||
       DEPOT_COORDINATES["central-maintenance"];
 
     const binSteps = routeDto.steps.filter((step) => step.type === "BIN");
     const binCoordinates = binSteps.map((step) => [step.lat, step.lon]);
-
-    console.log(`🗺️ Route coordinates for ${routeDto.truckId || "unknown"}:`, [
-      depotCoords,
-      ...binCoordinates,
-    ]);
 
     return [depotCoords, ...binCoordinates];
   };
@@ -324,7 +407,7 @@ const AdminRoutePlanner = () => {
             style={styles.input}
           />
           <p style={styles.helperText}>
-            {maxDrivers} driver{maxDrivers !== 1 ? "s" : ""} available
+            {maxDrivers} driver{maxDrivers !== 1 ? "s" : " "} available
             {maxDrivers === 0 && " - Add drivers from Teams page"}
           </p>
         </div>
@@ -396,7 +479,6 @@ const AdminRoutePlanner = () => {
           {loading ? "Generating Routes..." : "Generate Optimized Routes"}
         </button>
 
-        {/* Display Unassigned Bins if any */}
         {unassignedBins.length > 0 && (
           <div
             style={{
@@ -439,17 +521,13 @@ const AdminRoutePlanner = () => {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             />
 
-            <CircleMarker
-              center={
+            {/* ✅ UPDATED: Depot is now a Marker */}
+            <Marker
+              position={
                 DEPOT_COORDINATES[startingDepot] ||
                 DEPOT_COORDINATES["central-maintenance"]
               }
-              radius={12}
-              fillColor="#718096"
-              color="#fff"
-              weight={3}
-              opacity={1}
-              fillOpacity={0.9}
+              icon={depotIcon}
             >
               <Popup>
                 <strong>🏢 Starting Depot</strong>
@@ -461,7 +539,7 @@ const AdminRoutePlanner = () => {
                 {startingDepot === "east-issaquah" && "East Depot - Issaquah"}
                 {startingDepot === "west-seattle" && "West Depot - Seattle"}
               </Popup>
-            </CircleMarker>
+            </Marker>
 
             <MapController bins={bins} />
 
@@ -488,7 +566,7 @@ const AdminRoutePlanner = () => {
                     <br />
                     Fill: {bin.fillLevel}%
                     <br />
-                    Status:{" "}
+                    Status:{"  "}
                     {bin.isFlagged
                       ? "🚩 Flagged"
                       : bin.fillLevel >= 90
@@ -501,16 +579,19 @@ const AdminRoutePlanner = () => {
               );
             })}
 
-            {/* ✅ Render Routes using new coordinate extractor */}
+            {/* ✅ UPDATED: Render Routes using Road Coordinates from OSRM */}
             {generatedRoutes.map((route, index) => {
-              const coordinates = getRouteCoordinates(route);
+              // Use fetched road route if available, otherwise fall back to straight lines
+              const routeKey = route.id || route.truckId;
+              const coordinates =
+                roadRoutes[routeKey] || getRouteCoordinates(route);
 
               return (
                 <Polyline
                   key={index}
                   positions={coordinates}
                   color={getRouteColor(index)}
-                  weight={4}
+                  weight={5}
                   opacity={0.8}
                 >
                   <Popup>
@@ -528,7 +609,6 @@ const AdminRoutePlanner = () => {
           </MapContainer>
         </div>
 
-        {/* ✅ FIXED BIN STATUS SECTION STYLES */}
         <div style={styles.binsStats}>
           <h3
             style={{
@@ -541,20 +621,19 @@ const AdminRoutePlanner = () => {
             📊 Bin Status
           </h3>
           <p style={{ margin: "2px 0", fontSize: "13px", color: "#4a5568" }}>
-            <strong style={{ color: "#2d3748" }}>Total Bins:</strong>
-            {"   "}
+            <strong style={{ color: "#2d3748" }}>Total Bins: </strong>
             {bins.length}
           </p>
           <p style={{ margin: "2px 0", fontSize: "13px", color: "#4a5568" }}>
-            <strong style={{ color: "#2d3748" }}>Needing Pickup (≥70%):</strong>
-            {"   "}
+            <strong style={{ color: "#2d3748" }}>
+              Needing Pickup (≥70%):{" "}
+            </strong>
             <span style={{ color: "#e53e3e", fontWeight: "bold" }}>
               {binsNeedingPickup.length}
             </span>
           </p>
           <p style={{ margin: "2px 0", fontSize: "13px", color: "#4a5568" }}>
-            <strong style={{ color: "#2d3748" }}>Empty (0%):</strong>
-            {"   "}
+            <strong style={{ color: "#2d3748" }}>Empty (0%): </strong>
             <span style={{ color: "#718096", fontWeight: "bold" }}>
               {bins.filter((b) => b.fillLevel === 0).length}
             </span>
@@ -618,16 +697,14 @@ const AdminRoutePlanner = () => {
                   <h3 style={styles.driverCardTitle}>Driver {index + 1}</h3>
                   <p style={styles.driverCardText}>{binStops} Stops</p>
                   <p style={styles.driverCardText}>
-                    ⏱️ {hours > 0 ? `${hours}h` : "    "}
+                    ⏱️ {hours > 0 ? `${hours}h` : "     "}
                     {minutes}m
                   </p>
                   <div style={styles.routeInfo}>
-                    <strong>Truck:</strong>
-                    {"    "}
+                    <strong>Truck: </strong>
                     {route.truckId || "N/A"}
                     <br />
-                    <strong>Driver:</strong>
-                    {"    "}
+                    <strong>Driver: </strong>
                     {route.driverId || "Not assigned"}
                   </div>
                 </div>

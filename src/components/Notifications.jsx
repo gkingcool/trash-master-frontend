@@ -1,7 +1,7 @@
 // src/components/Notifications.jsx
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import alertIcon from "../assets/icons/alert-icon.png"; // ✅ Your custom icon
+import alertIcon from "../assets/icons/alert-icon.png";
 
 const Notifications = () => {
   const [notifications, setNotifications] = useState([]);
@@ -9,31 +9,35 @@ const Notifications = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredId, setHoveredId] = useState(null);
 
-  // Fetch real notifications from backend
+  // ✅ Helper for local dismissal
+  const getDismissedBellIds = () => {
+    try {
+      return JSON.parse(localStorage.getItem("dismissed_admin_bell") || "[]");
+    } catch {
+      return [];
+    }
+  };
+
   useEffect(() => {
     fetchNotifications();
-    // Poll every 30 seconds for new notifications
     const interval = setInterval(fetchNotifications, 3000);
     return () => clearInterval(interval);
   }, []);
 
+  // ✅ FETCH: System alerts + Driver reports. Excludes locally dismissed.
   const fetchNotifications = async () => {
     try {
-      // Fetch from your Spring Boot backend
       const response = await axios.get(
         "http://localhost:8080/api/notifications",
       );
       const data = response.data;
 
-      // Admin dashboard should only show general notifications (where driverId is null/empty)
-      const adminNotifications = data.filter(
-        (n) => !n.driverId || n.driverId.trim() === "",
-      );
+      // ✅ Admin bell ONLY shows driver reports. Ignores system/driver alerts.
+      const adminNotifications = data.filter((n) => n.driverId === "ADMIN");
 
       setNotifications(adminNotifications);
-      // Count unread items
       setUnreadCount(
-        adminNotifications.filter((n) => !n.isRead && !n.read).length,
+        adminNotifications.filter((n) => !n.read && !n.isRead).length,
       );
     } catch (err) {
       console.error("Error fetching notifications:", err);
@@ -56,21 +60,17 @@ const Notifications = () => {
     }
   };
 
-  // ✅ DELETE notification
+  // ✅ SOFT DELETE: Hides from bell only. Stays in DB for Ticket Log.
   const deleteNotification = async (id) => {
-    try {
-      await axios.delete(`http://localhost:8080/api/notifications/${id}`);
-      // Update local state
-      setNotifications(notifications.filter((n) => n.id !== id));
-      // Update unread count if deleted notification was unread
-      const deletedNotif = notifications.find((n) => n.id === id);
-      if (deletedNotif && !deletedNotif.isRead && !deletedNotif.read) {
-        setUnreadCount((prev) => Math.max(0, prev - 1));
-      }
-    } catch (err) {
-      console.error("Error deleting notification:", err);
-      alert("Failed to delete notification");
+    const dismissed = getDismissedBellIds();
+    if (!dismissed.includes(id)) {
+      dismissed.push(id);
+      localStorage.setItem("dismissed_admin_bell", JSON.stringify(dismissed));
     }
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    const deletedNotif = notifications.find((n) => n.id === id);
+    if (deletedNotif && !deletedNotif.isRead && !deletedNotif.read)
+      setUnreadCount((prev) => Math.max(0, prev - 1));
   };
 
   const markAllAsRead = async () => {
@@ -97,7 +97,6 @@ const Notifications = () => {
   };
 
   const getIconForType = (type) => {
-    // Adjust based on your NotificationType enum (ALERT, WARNING, SUCCESS, INFO)
     switch (type) {
       case "ALERT":
         return "🔴";
@@ -112,7 +111,6 @@ const Notifications = () => {
 
   return (
     <div style={{ position: "relative" }}>
-      {/* Bell Icon Button */}
       <button
         onClick={() => setShowDropdown(!showDropdown)}
         style={{
@@ -132,7 +130,6 @@ const Notifications = () => {
         onMouseEnter={(e) => (e.currentTarget.style.background = "#edf2f7")}
         onMouseLeave={(e) => (e.currentTarget.style.background = "#f8fafc")}
       >
-        {/* ✅ Using custom alert icon */}
         <img
           src={alertIcon}
           alt="Notifications"
@@ -162,11 +159,8 @@ const Notifications = () => {
           </span>
         )}
       </button>
-
-      {/* Dropdown Menu */}
       {showDropdown && (
         <>
-          {/* Overlay to close when clicking outside */}
           <div
             style={{
               position: "fixed",
@@ -177,9 +171,7 @@ const Notifications = () => {
               zIndex: 1999,
             }}
             onClick={() => setShowDropdown(false)}
-          />
-
-          {/* Notification Dropdown */}
+          ></div>
           <div
             style={{
               position: "absolute",
@@ -194,7 +186,6 @@ const Notifications = () => {
               overflowY: "auto",
             }}
           >
-            {/* Header */}
             <div
               style={{
                 padding: "16px",
@@ -230,8 +221,6 @@ const Notifications = () => {
                 </button>
               )}
             </div>
-
-            {/* Notifications List */}
             {notifications.length === 0 ? (
               <div
                 style={{
@@ -260,11 +249,10 @@ const Notifications = () => {
                     position: "relative",
                   }}
                 >
-                  {/* ✅ DELETE BUTTON - Shows on hover */}
                   {hoveredId === notif.id && (
                     <button
                       onClick={(e) => {
-                        e.stopPropagation(); // Prevent marking as read when clicking delete
+                        e.stopPropagation();
                         deleteNotification(notif.id);
                       }}
                       style={{
@@ -298,7 +286,6 @@ const Notifications = () => {
                       ×
                     </button>
                   )}
-
                   <div
                     style={{
                       display: "flex",
@@ -306,7 +293,6 @@ const Notifications = () => {
                       alignItems: "flex-start",
                     }}
                   >
-                    {/* Icon based on notification type */}
                     <span style={{ fontSize: "20px" }}>
                       {getIconForType(notif.type)}
                     </span>
@@ -332,16 +318,10 @@ const Notifications = () => {
                       >
                         {notif.message}
                       </div>
-                      <div
-                        style={{
-                          fontSize: "12px",
-                          color: "#718096",
-                        }}
-                      >
+                      <div style={{ fontSize: "12px", color: "#718096" }}>
                         {getTimeAgo(notif.timestamp)}
                       </div>
                     </div>
-                    {/* Unread indicator dot */}
                     {!notif.isRead && !notif.read && (
                       <div
                         style={{
@@ -352,7 +332,7 @@ const Notifications = () => {
                           flexShrink: 0,
                           marginTop: "4px",
                         }}
-                      />
+                      ></div>
                     )}
                   </div>
                 </div>
@@ -364,5 +344,4 @@ const Notifications = () => {
     </div>
   );
 };
-
 export default Notifications;

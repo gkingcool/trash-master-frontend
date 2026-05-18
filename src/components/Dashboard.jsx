@@ -22,8 +22,10 @@ import {
   Legend,
   Title,
 } from "chart.js";
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-// Register Chart.js components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -34,12 +36,6 @@ ChartJS.register(
   Legend,
   Title,
 );
-
-// Fix Leaflet marker icons
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
-
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -47,7 +43,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-// ✅ Washington State Bounds
 const WASHINGTON_BOUNDS = [
   [45.5435, -124.7631],
   [49.0024, -116.9165],
@@ -55,69 +50,52 @@ const WASHINGTON_BOUNDS = [
 const WASHINGTON_CENTER = [47.7511, -120.7401];
 const WASHINGTON_ZOOM = 7;
 
-// ✅ Helper to safely extract coordinates from either flat or nested structure
 const getBinCoordinates = (bin) => {
-  if (bin.latitude != null && bin.longitude != null) {
+  if (bin.latitude != null && bin.longitude != null)
     return [bin.latitude, bin.longitude];
-  }
-  if (bin.location && bin.location.lat != null && bin.location.lon != null) {
+  if (bin.location && bin.location.lat != null && bin.location.lon != null)
     return [bin.location.lat, bin.location.lon];
-  }
   return null;
 };
 
-// ✅ Map Controller - Auto-zoom to new bin + Double-click with fade animation
 function MapController({ bins }) {
   const map = useMap();
   const previousBinCount = useRef(0);
-
-  // ✅ Auto-zoom to NEW bin when added (NO animation - instant)
   useEffect(() => {
     if (bins.length > previousBinCount.current && bins.length > 0) {
       const latestBin = bins[bins.length - 1];
       const coords = getBinCoordinates(latestBin);
-      if (coords) {
-        map.setView(coords, 15);
-      }
+      if (coords) map.setView(coords, 15);
     }
     previousBinCount.current = bins.length;
   }, [bins, map]);
-
-  // ✅ Double-click to zoom out with FADE animation
   useEffect(() => {
     const handleDoubleClick = () => {
       const mapContainer = document.querySelector(".leaflet-container");
       if (mapContainer) {
         mapContainer.style.transition = "opacity 0.5s ease";
         mapContainer.style.opacity = "0.3";
-
-        if (bins.length === 0) {
-          map.setView(WASHINGTON_CENTER, WASHINGTON_ZOOM);
-        } else if (bins.length === 1) {
+        if (bins.length === 0) map.setView(WASHINGTON_CENTER, WASHINGTON_ZOOM);
+        else if (bins.length === 1) {
           const coords = getBinCoordinates(bins[0]);
           if (coords) map.setView(coords, 13);
         } else {
           const binCoordinates = bins
             .map(getBinCoordinates)
             .filter((c) => c !== null);
-          if (binCoordinates.length > 0) {
-            const bounds = L.latLngBounds(binCoordinates);
-            map.fitBounds(bounds, { padding: [50, 50] });
-          }
+          if (binCoordinates.length > 0)
+            map.fitBounds(L.latLngBounds(binCoordinates), {
+              padding: [50, 50],
+            });
         }
-
         setTimeout(() => {
           mapContainer.style.opacity = "1";
         }, 100);
       }
     };
-
     map.on("dblclick", handleDoubleClick);
-    return () => {
-      map.off("dblclick", handleDoubleClick);
-    };
+    return () => map.off("dblclick", handleDoubleClick);
   }, [bins, map]);
-
   return null;
 }
 
@@ -220,7 +198,6 @@ const Dashboard = () => {
   });
   const [ticketLog, setTicketLog] = useState([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
-
   const barOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -247,7 +224,6 @@ const Dashboard = () => {
       x: { grid: { display: false }, ticks: { color: "#4a5568" } },
     },
   };
-
   const [columnWidths, setColumnWidths] = useState({
     id: 70,
     description: 280,
@@ -255,10 +231,13 @@ const Dashboard = () => {
     sys: 90,
     date: 110,
     status: 120,
+    actions: 50,
   });
   const [isResizing, setIsResizing] = useState(null);
   const [resizeStart, setResizeStart] = useState({ x: 0, width: 0 });
   const resizeRef = useRef(null);
+
+  // ✅ Added "actions" column
   const columns = [
     { key: "id", label: "ID" },
     { key: "description", label: "Description" },
@@ -266,9 +245,9 @@ const Dashboard = () => {
     { key: "sys", label: "System" },
     { key: "date", label: "Date" },
     { key: "status", label: "Status" },
+    { key: "actions", label: "" },
   ];
 
-  // ✅ Calculate KPIs from Bin Data
   const calculateStatistics = (binsData) => {
     if (!binsData || binsData.length === 0) return;
     const totalBins = binsData.length;
@@ -303,7 +282,6 @@ const Dashboard = () => {
     const segregationRate =
       totalBins > 0 ? (recyclingBins / totalBins) * 100 : 33;
     const electricityGenerated = (totalWasteCollected / 100) * 0.5;
-
     setKpis([
       {
         title: "Total Waste Collected",
@@ -417,6 +395,7 @@ const Dashboard = () => {
     });
   };
 
+  // ✅ FETCH TICKETS: ONLY shows driver reports (driverId === "ADMIN")
   const fetchTickets = async () => {
     try {
       const response = await axios.get(
@@ -424,23 +403,22 @@ const Dashboard = () => {
       );
       const notifications = response.data;
       if (!Array.isArray(notifications)) {
-        console.warn(
-          "Received non-array data for notifications, clearing log.",
-        );
         setTicketLog([]);
         setTicketsLoading(false);
         return;
       }
-      const tickets = notifications.map((notif) => ({
-        id: notif.id,
-        desc: notif.message || notif.title || "No description",
-        comp: notif.status === "Resolved" ? "Completed" : "Pending",
-        sys: notif.binId ? "System" : "User",
-        date: notif.timestamp
-          ? new Date(notif.timestamp).toLocaleDateString()
-          : "N/A",
-        status: notif.status || "Under Review",
-      }));
+      const tickets = notifications
+        .filter((n) => n.driverId === "ADMIN")
+        .map((notif) => ({
+          id: notif.id,
+          desc: notif.message || notif.title || "No description",
+          comp: notif.status === "Resolved" ? "Completed" : "Pending",
+          sys: "User",
+          date: notif.timestamp
+            ? new Date(notif.timestamp).toLocaleDateString()
+            : "N/A",
+          status: notif.status || "Under Review",
+        }));
       setTicketLog(tickets);
       setTicketsLoading(false);
     } catch (err) {
@@ -466,10 +444,19 @@ const Dashboard = () => {
             : ticket,
         ),
       );
-      console.log(`Ticket ${ticketId} status updated to ${newStatus}`);
     } catch (err) {
       console.error("Error updating ticket status:", err);
       alert("Failed to update ticket status");
+    }
+  };
+
+  // ✅ HARD DELETE: Permanently removes from DB
+  const handleDeleteTicket = async (ticketId) => {
+    try {
+      await axios.delete(`http://localhost:8080/api/notifications/${ticketId}`);
+      setTicketLog((prev) => prev.filter((t) => t.id !== ticketId));
+    } catch (err) {
+      console.error("Failed to delete ticket:", err);
     }
   };
 
@@ -477,10 +464,9 @@ const Dashboard = () => {
     const fetchBins = async () => {
       try {
         const response = await axios.get("http://localhost:8080/api/bins");
-        const binsData = response.data;
-        setBins(binsData);
+        setBins(response.data);
         setBinsLoading(false);
-        calculateStatistics(binsData);
+        calculateStatistics(response.data);
       } catch (err) {
         console.error("Error fetching bins:", err);
         setBinsLoading(false);
@@ -503,27 +489,22 @@ const Dashboard = () => {
     if (fillLevel > 0) return "#38a169";
     return "#718096";
   };
-
   const handleResizeStart = (index, e) => {
     e.preventDefault();
     const colKey = columns[index].key;
-    const colWidth = columnWidths[colKey];
-    setResizeStart({ x: e.clientX, width: colWidth });
+    setResizeStart({ x: e.clientX, width: columnWidths[colKey] });
     setIsResizing(index);
   };
   const handleResizeMove = (e) => {
     if (isResizing === null) return;
     const dx = e.clientX - resizeStart.x;
     const newWidth = Math.max(50, resizeStart.width + dx);
-    const colKey = columns[isResizing].key;
-    const newWidths = { ...columnWidths, [colKey]: newWidth };
-    setColumnWidths(newWidths);
+    setColumnWidths({ ...columnWidths, [columns[isResizing].key]: newWidth });
   };
   const handleResizeEnd = () => {
     setIsResizing(null);
     document.body.style.cursor = "default";
   };
-
   useEffect(() => {
     if (isResizing !== null) {
       document.addEventListener("mousemove", handleResizeMove);
@@ -544,14 +525,12 @@ const Dashboard = () => {
   const underReviewTickets = ticketLog.filter(
     (t) => t.status === "Under Review",
   ).length;
-
   const getStatusBadgeStyle = (status) => {
     switch (status) {
       case "Resolved":
         return { background: "#c6f6d5", color: "#38a169" };
       case "In Progress":
         return { background: "#bee3f8", color: "#3182ce" };
-      case "Under Review":
       default:
         return { background: "#fed7d7", color: "#e53e3e" };
     }
@@ -562,57 +541,7 @@ const Dashboard = () => {
       className="dashboard-page"
       style={{ backgroundColor: "white", minHeight: "100vh", padding: "20px" }}
     >
-      <style>{`
-        .dashboard-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 15px; margin-bottom: 20px; }
-        .kpi-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; position: relative; }
-        .kpi-title { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
-        .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; color: #1a202c; }
-        .kpi-unit { font-size: 14px; color: #4a5568; margin-top: 4px; }
-        .kpi-subtext { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.4; min-height: 30px; }
-        .kpi-progress { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin-top: auto; position: relative; width: 100%; }
-        .kpi-progress-bar { height: 100%; border-radius: 4px; position: relative; transition: width 0.3s ease; }
-        .kpi-progress-value { position: absolute; right: 0; top: -22px; font-size: 12px; color: #4a5568; }
-        .map-container { background: #2d3748; border-radius: 8px; height: 350px; margin-bottom: 20px; position: relative; overflow: hidden; }
-        .map-legend { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
-        .legend-item { background: rgba(255,255,255,0.9); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-        .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
-        .legend-gray { background: #718096; }
-        .legend-green { background: #38a169; }
-        .legend-orange { background: #dd6b20; }
-        .legend-red { background: #e53e3e; }
-        .map-scale { position: absolute; bottom: 20px; left: 20px; font-size: 12px; color: #cbd5e1; z-index: 1000; }
-        .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
-        .ticket-log { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .ticket-log-header { padding: 16px; border-bottom: 1px solid #edf2f7; font-weight: 600; font-size: 18px; color: #2d3748; }
-        .ticket-log-table { width: 100%; border-collapse: collapse; overflow-y: auto; max-height: 400px; }
-        .ticket-log-table th { padding: 12px 16px; text-align: left; font-weight: 600; color: #4a5568; font-size: 14px; border-bottom: 1px solid #edf2f7; position: relative; min-width: 50px; }
-        .ticket-log-table th .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; cursor: col-resize; z-index: 10; }
-        .ticket-log-table th:hover .resize-handle { background: #cbd5e0; }
-        .ticket-log-table td { padding: 12px 16px; font-size: 13px; color: #2d3748; border-bottom: 1px solid #edf2f7; white-space: normal; word-break: break-word; }
-        .ticket-log-table tr:last-child td { border-bottom: none; }
-        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
-        .status-badge:hover { opacity: 0.8; }
-        .status-under-review { background: #fed7d7; color: #e53e3e; }
-        .status-in-progress { background: #bee3f8; color: #3182ce; }
-        .status-resolved { background: #c6f6d5; color: #38a169; }
-        .status-pending { background: #feebc8; color: #dd6b20; }
-        .chart-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; }
-        .chart-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 12px; }
-        .chart-container { height: 200px; }
-        .stats-footer { display: flex; justify-content: space-between; background: white; border-radius: 8px; padding: 16px; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .stat-box { text-align: center; flex: 1; }
-        .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 4px; }
-        .stat-value { font-size: 24px; font-weight: 700; color: #1a202c; }
-        .stat-resolved { color: #38a169; }
-        .stat-under-review { color: #e53e3e; }
-        .leaflet-container { background: #2d3748; border-radius: 8px; }
-        .status-dropdown { padding: 4px 8px; border-radius: 4px; border: 1px solid #cbd5e0; font-size: 12px; font-weight: 500; cursor: pointer; background: white; transition: all 0.2s; }
-        .status-dropdown:hover { border-color: #38a169; }
-        .status-dropdown option { padding: 8px; }
-      `}</style>
-
-      {/* KPI Cards */}
+      <style>{`.dashboard-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; } .kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 15px; margin-bottom: 20px; } .kpi-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; position: relative; } .kpi-title { font-size: 14px; color: #4a5568; margin-bottom: 8px; } .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; color: #1a202c; } .kpi-unit { font-size: 14px; color: #4a5568; margin-top: 4px; } .kpi-subtext { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.4; min-height: 30px; } .kpi-progress { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin-top: auto; position: relative; width: 100%; } .kpi-progress-bar { height: 100%; border-radius: 4px; position: relative; transition: width 0.3s ease; } .kpi-progress-value { position: absolute; right: 0; top: -22px; font-size: 12px; color: #4a5568; } .map-container { background: #2d3748; border-radius: 8px; height: 350px; margin-bottom: 20px; position: relative; overflow: hidden; } .map-legend { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; } .legend-item { background: rgba(255,255,255,0.9); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); } .legend-dot { width: 8px; height: 8px; border-radius: 50%; } .legend-gray { background: #718096; } .legend-green { background: #38a169; } .legend-orange { background: #dd6b20; } .legend-red { background: #e53e3e; } .map-scale { position: absolute; bottom: 20px; left: 20px; font-size: 12px; color: #cbd5e1; z-index: 1000; } .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; } .ticket-log { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); } .ticket-log-header { padding: 16px; border-bottom: 1px solid #edf2f7; font-weight: 600; font-size: 18px; color: #2d3748; } .ticket-log-table { width: 100%; border-collapse: collapse; overflow-y: auto; max-height: 400px; } .ticket-log-table th { padding: 12px 16px; text-align: left; font-weight: 600; color: #4a5568; font-size: 14px; border-bottom: 1px solid #edf2f7; position: relative; min-width: 50px; } .ticket-log-table th .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; cursor: col-resize; z-index: 10; } .ticket-log-table th:hover .resize-handle { background: #cbd5e0; } .ticket-log-table td { padding: 12px 16px; font-size: 13px; color: #2d3748; border-bottom: 1px solid #edf2f7; white-space: normal; word-break: break-word; } .ticket-log-table tr:last-child td { border-bottom: none; } .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; } .status-badge:hover { opacity: 0.8; } .status-under-review { background: #fed7d7; color: #e53e3e; } .status-in-progress { background: #bee3f8; color: #3182ce; } .status-resolved { background: #c6f6d5; color: #38a169; } .status-pending { background: #feebc8; color: #dd6b20; } .chart-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; } .chart-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 12px; } .chart-container { height: 200px; } .stats-footer { display: flex; justify-content: space-between; background: white; border-radius: 8px; padding: 16px; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); } .stat-box { text-align: center; flex: 1; } .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 4px; } .stat-value { font-size: 24px; font-weight: 700; color: #1a202c; } .stat-resolved { color: #38a169; } .stat-under-review { color: #e53e3e; } .leaflet-container { background: #2d3748; border-radius: 8px; } .status-dropdown { padding: 4px 8px; border-radius: 4px; border: 1px solid #cbd5e0; font-size: 12px; font-weight: 500; cursor: pointer; background: white; transition: all 0.2s; } .status-dropdown:hover { border-color: #38a169; } .status-dropdown option { padding: 8px; }`}</style>
       <div className="kpi-grid">
         {kpis.map((kpi, i) => (
           <div key={i} className="kpi-card">
@@ -637,8 +566,6 @@ const Dashboard = () => {
           </div>
         ))}
       </div>
-
-      {/* ✅ Map Section - ALWAYS VISIBLE */}
       <div className="map-container">
         {binsLoading ? (
           <div
@@ -667,11 +594,7 @@ const Dashboard = () => {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             />
-
-            {/* ✅ Map Controller - Auto-zoom + Double-click fade */}
             <MapController bins={bins} />
-
-            {/* ✅ Render bin markers with safe coordinate extraction */}
             {bins.map((bin) => {
               const coords = getBinCoordinates(bin);
               if (!coords) return null;
@@ -706,8 +629,6 @@ const Dashboard = () => {
                 </CircleMarker>
               );
             })}
-
-            {/* Show message when no bins */}
             {bins.length === 0 && (
               <Popup position={WASHINGTON_CENTER}>
                 <div style={{ textAlign: "center" }}>
@@ -728,8 +649,6 @@ const Dashboard = () => {
             )}
           </MapContainer>
         )}
-
-        {/* Map Legend */}
         <div className="map-legend">
           <div className="legend-item">
             <div className="legend-dot legend-gray"></div>
@@ -753,10 +672,7 @@ const Dashboard = () => {
           <div>2mi</div>
         </div>
       </div>
-
-      {/* Content Section */}
       <div className="content-grid">
-        {/* Ticket Log */}
         <div className="ticket-log">
           <div className="ticket-log-header">Ticket Log</div>
           {ticketsLoading ? (
@@ -812,14 +728,45 @@ const Dashboard = () => {
                         <option value="Resolved">Resolved</option>
                       </select>
                     </td>
+                    {/* ✅ DELETE BUTTON COLUMN */}
+                    <td
+                      style={{
+                        width: columnWidths.actions,
+                        textAlign: "center",
+                      }}
+                    >
+                      <button
+                        onClick={() => handleDeleteTicket(t.id)}
+                        style={{
+                          background: "#fed7d7",
+                          border: "none",
+                          color: "#e53e3e",
+                          cursor: "pointer",
+                          borderRadius: "4px",
+                          padding: "4px 8px",
+                          fontSize: "14px",
+                          fontWeight: "600",
+                          transition: "all 0.2s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#e53e3e";
+                          e.currentTarget.style.color = "white";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "#fed7d7";
+                          e.currentTarget.style.color = "#e53e3e";
+                        }}
+                        title="Permanently delete ticket"
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </div>
-
-        {/* Charts */}
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           <div className="chart-card">
             <div className="chart-title">Reselling Revenue (in $)</div>
@@ -835,8 +782,6 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-
-      {/* Stats Footer */}
       <div className="stats-footer">
         <div className="stat-box">
           <div className="stat-label">Total Tickets</div>
@@ -856,5 +801,4 @@ const Dashboard = () => {
     </div>
   );
 };
-
 export default Dashboard;

@@ -4,14 +4,14 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 const API_BASE_URL = "http://localhost:8080/api/employees";
-const TRUCKS_API_URL = "http://localhost:8080/api/trucks"; // Added Trucks API
+const TRUCKS_API_URL = "http://localhost:8080/api/trucks";
 const ROUTES_API_URL = "http://localhost:8080/api/routes/all";
 const NOTIFICATIONS_API_URL = "http://localhost:8080/api/notifications";
 
 const AdminDriverPage = () => {
   const navigate = useNavigate();
   const [drivers, setDrivers] = useState([]);
-  const [trucks, setTrucks] = useState([]); // ✅ State for Trucks
+  const [trucks, setTrucks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState(null);
@@ -20,8 +20,12 @@ const AdminDriverPage = () => {
   // Modal States
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [messageText, setMessageText] = useState("");
-  const [showAssignTruckModal, setShowAssignTruckModal] = useState(false); // ✅ New Modal
-  const [selectedTruckId, setSelectedTruckId] = useState(""); // ✅ Selected Truck
+  const [showAssignTruckModal, setShowAssignTruckModal] = useState(false);
+  const [selectedTruckId, setSelectedTruckId] = useState("");
+
+  // Export Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportType, setExportType] = useState("csv"); // csv, pdf, current-view
 
   // Fetch drivers, trucks, and routes on load
   useEffect(() => {
@@ -57,7 +61,6 @@ const AdminDriverPage = () => {
             (route.status === "CREATED" || route.status === "IN_PROGRESS"),
         );
 
-        // Find which truck is currently assigned to this driver
         const assignedTruck = trucksResponse.data.find(
           (t) => t.assignedDriverId === emp.employeeId,
         );
@@ -70,9 +73,10 @@ const AdminDriverPage = () => {
         return {
           id: emp.employeeId,
           name: `${emp.firstName} ${emp.lastName}`,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
           status: emp.status === "ACTIVE" || emp.active ? "active" : "offline",
           currentRoute: activeRoute?.routeNumber || null,
-          // ✅ Use real truck ID if found, otherwise fallback
           vehicle: assignedTruck ? assignedTruck.truckId : "Unassigned",
           completedStops,
           totalStops,
@@ -86,12 +90,11 @@ const AdminDriverPage = () => {
           avatar: `${emp.firstName?.[0] || ""}${emp.lastName?.[0] || ""}`,
           todayCollection: `${(completedStops * 0.5).toFixed(1)} tons`,
           efficiency: `${efficiency}%`,
+          efficiencyValue: efficiency,
           lastUpdate: activeRoute?.updatedAt
             ? new Date(activeRoute.updatedAt).toLocaleTimeString()
             : "Just now",
           employeeId: emp.employeeId,
-          firstName: emp.firstName,
-          lastName: emp.lastName,
           routeData: activeRoute,
         };
       });
@@ -99,7 +102,7 @@ const AdminDriverPage = () => {
       setDrivers(driverData);
       setLoading(false);
     } catch (err) {
-      console.error("Error fetching ", err);
+      console.error("Error fetching data:", err);
       setError(
         "Failed to load drivers or trucks. Make sure backend is running.",
       );
@@ -107,22 +110,172 @@ const AdminDriverPage = () => {
     }
   };
 
-  // ✅ Handle Truck Assignment
+  // ✅ EXPORT FUNCTIONS
+
+  // Convert drivers data to CSV format
+  const convertToCSV = (dataArray) => {
+    if (!dataArray || dataArray.length === 0) return "";
+
+    const headers = [
+      "Driver ID",
+      "First Name",
+      "Last Name",
+      "Full Name",
+      "Status",
+      "Vehicle",
+      "Phone",
+      "Email",
+      "Location",
+      "Completed Stops",
+      "Total Stops",
+      "Efficiency (%)",
+      "Today's Collection (tons)",
+      "Last Update",
+    ];
+
+    const rows = dataArray.map((driver) => [
+      driver.id,
+      driver.firstName || "",
+      driver.lastName || "",
+      driver.name,
+      driver.status,
+      driver.vehicle,
+      driver.phone,
+      driver.email || "",
+      driver.location,
+      driver.completedStops,
+      driver.totalStops,
+      driver.efficiencyValue,
+      parseFloat(driver.todayCollection) || 0,
+      driver.lastUpdate,
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) =>
+        row
+          .map((cell) => {
+            // Escape quotes and wrap in quotes if contains comma
+            const cellStr = String(cell);
+            if (
+              cellStr.includes(",") ||
+              cellStr.includes('"') ||
+              cellStr.includes("\n")
+            ) {
+              return `"${cellStr.replace(/"/g, '""')}"`;
+            }
+            return cellStr;
+          })
+          .join(","),
+      ),
+    ].join("\n");
+
+    return csvContent;
+  };
+
+  // Download CSV file
+  const downloadCSV = (data, filename) => {
+    const csv = convertToCSV(data);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = "hidden";
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export all drivers
+  const handleExportAllDrivers = () => {
+    const timestamp = new Date().toISOString().split("T")[0];
+    downloadCSV(drivers, `driver-report-${timestamp}.csv`);
+    setShowExportModal(false);
+    alert("✅ Driver report exported successfully!");
+  };
+
+  // Export filtered drivers (current view)
+  const handleExportCurrentView = () => {
+    const filteredDrivers =
+      filterStatus === "all"
+        ? drivers
+        : drivers.filter((d) => d.status === filterStatus);
+
+    const timestamp = new Date().toISOString().split("T")[0];
+    downloadCSV(filteredDrivers, `drivers-${filterStatus}-${timestamp}.csv`);
+    setShowExportModal(false);
+    alert(`✅ Exported ${filteredDrivers.length} drivers successfully!`);
+  };
+
+  // Export active drivers only
+  const handleExportActiveDrivers = () => {
+    const activeDrivers = drivers.filter((d) => d.status === "active");
+    const timestamp = new Date().toISOString().split("T")[0];
+    downloadCSV(activeDrivers, `active-drivers-${timestamp}.csv`);
+    setShowExportModal(false);
+    alert(`✅ Exported ${activeDrivers.length} active drivers successfully!`);
+  };
+
+  // PDF Export (Note: Requires jspdf library - see instructions below)
+  const handleExportPDF = () => {
+    alert(
+      "📄 PDF Export: To enable PDF export, install the jspdf library:\n\nnpm install jspdf\n\nThen implement the generatePDF function.",
+    );
+    setShowExportModal(false);
+  };
+
+  const generatePDF = async () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    // Add title
+    doc.setFontSize(20);
+    doc.text("Driver Performance Report", 14, 20);
+
+    // Add date
+    doc.setFontSize(11);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+
+    // Add table headers
+    const headers = [
+      ["ID", "Name", "Status", "Vehicle", "Stops", "Efficiency"],
+    ];
+    const data = drivers.map((d) => [
+      d.id,
+      d.name,
+      d.status,
+      d.vehicle,
+      `${d.completedStops}/${d.totalStops}`,
+      d.efficiency,
+    ]);
+
+    // Create table
+    doc.autoTable({
+      head: headers,
+      body: data,
+      startY: 40,
+    });
+
+    // Save PDF
+    doc.save(`driver-report-${new Date().toISOString().split("T")[0]}.pdf`);
+  };
+
+  // Handle truck assignment
   const handleAssignTruck = async () => {
     if (!selectedDriver || !selectedTruckId) return;
-
     try {
-      // Update the Truck entity with the new Driver ID
-      // We use PUT /api/trucks/{truckId}
       await axios.put(`${TRUCKS_API_URL}/${selectedTruckId}`, {
         assignedDriverId: selectedDriver.id,
-        currentCompactedYards: 0.0, // Reset load when assigning to a new driver/route
+        currentCompactedYards: 0.0,
       });
 
       alert(`✅ Truck ${selectedTruckId} assigned to ${selectedDriver.name}`);
       setShowAssignTruckModal(false);
       setSelectedTruckId("");
-      fetchAllData(); // Refresh to show updates
+      fetchAllData();
     } catch (err) {
       console.error("Error assigning truck:", err);
       alert("Failed to assign truck. It may already be assigned or not exist.");
@@ -170,19 +323,22 @@ const AdminDriverPage = () => {
     }
   };
 
-  // Open Assign Truck Modal
   const openAssignTruckModal = (driver) => {
     setSelectedDriver(driver);
-    // Pre-select the truck currently assigned to this driver if any
     const currentTruck = trucks.find((t) => t.assignedDriverId === driver.id);
     setSelectedTruckId(currentTruck ? currentTruck.truckId : "");
     setShowAssignTruckModal(true);
+  };
+
+  const openExportModal = () => {
+    setShowExportModal(true);
   };
 
   if (loading)
     return (
       <div style={{ padding: "40px", textAlign: "center" }}>Loading...</div>
     );
+
   if (error)
     return (
       <div style={{ padding: "40px", textAlign: "center", color: "#e53e3e" }}>
@@ -200,84 +356,472 @@ const AdminDriverPage = () => {
     <div className="admin-driver-page">
       {/* Styles */}
       <style>{`
-        .admin-driver-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f5f7fa; min-height: 100vh; }
-        .admin-driver-page .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .admin-driver-page .page-title { font-size: 24px; font-weight: 600; color: #2d3748; margin: 0; }
-        .admin-driver-page .header-actions { display: flex; gap: 12px; }
-        .admin-driver-page .btn-primary { background: #38a169; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-        .admin-driver-page .btn-primary:hover { background: #2f855a; }
-        .admin-driver-page .btn-secondary { background: white; color: #4a5568; border: 1px solid #e2e8f0; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-        .admin-driver-page .btn-secondary:hover { background: #f8fafc; }
-        .admin-driver-page .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-        .admin-driver-page .stat-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .admin-driver-page .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
-        .admin-driver-page .stat-value { font-size: 28px; font-weight: 700; color: #1a202c; }
-        .admin-driver-page .stat-subtitle { font-size: 12px; color: #718096; margin-top: 4px; }
-        .admin-driver-page .filter-bar { display: flex; gap: 12px; margin-bottom: 20px; align-items: center; }
-        .admin-driver-page .filter-label { font-size: 14px; color: #4a5568; font-weight: 500; }
-        .admin-driver-page .filter-buttons { display: flex; gap: 8px; }
-        .admin-driver-page .filter-btn { padding: 8px 16px; border: 1px solid #e2e8f0; background: white; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
-        .admin-driver-page .filter-btn.active { background: #38a169; color: white; border-color: #38a169; }
-        .admin-driver-page .filter-btn:hover:not(.active) { background: #f8fafc; }
-        .admin-driver-page .drivers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
-        .admin-driver-page .driver-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; transition: all 0.2s; border: 2px solid transparent; }
-        .admin-driver-page .driver-card:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.1); transform: translateY(-2px); }
-        .admin-driver-page .driver-card.selected { border-color: #38a169; }
-        .admin-driver-page .driver-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-        .admin-driver-page .driver-info { display: flex; align-items: center; gap: 12px; }
-        .admin-driver-page .driver-avatar { width: 48px; height: 48px; border-radius: 50%; background: #38a169; color: white; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
-        .admin-driver-page .driver-details h3 { margin: 0; font-size: 16px; color: #2d3748; font-weight: 600; }
-        .admin-driver-page .driver-id { font-size: 13px; color: #718096; margin-top: 2px; }
-        .admin-driver-page .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
-        .admin-driver-page .status-active { background: #c6f6d5; color: #38a169; }
-        .admin-driver-page .status-idle { background: #e2e8f0; color: #4a5568; }
-        .admin-driver-page .status-offline { background: #fed7d7; color: #e53e3e; }
-        .admin-driver-page .driver-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
-        .admin-driver-page .driver-stat { padding: 12px; background: #f8fafc; border-radius: 6px; }
-        .admin-driver-page .driver-stat-label { font-size: 12px; color: #718096; margin-bottom: 4px; }
-        .admin-driver-page .driver-stat-value { font-size: 16px; font-weight: 600; color: #2d3748; }
-        .admin-driver-page .progress-section { margin-bottom: 16px; }
-        .admin-driver-page .progress-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
-        .admin-driver-page .progress-label { color: #4a5568; }
-        .admin-driver-page .progress-value { color: #2d3748; font-weight: 600; }
-        .admin-driver-page .progress-bar { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; }
-        .admin-driver-page .progress-fill { height: 100%; background: #38a169; border-radius: 4px; transition: width 0.3s; }
-        .admin-driver-page .driver-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid #edf2f7; font-size: 13px; }
-        .admin-driver-page .driver-location { color: #4a5568; display: flex; align-items: center; gap: 6px; }
-        .admin-driver-page .driver-time { color: #718096; }
-        .admin-driver-page .driver-detail-modal { position: fixed; top: 0; right: 0; width: 450px; height: 100vh; background: white; box-shadow: -4px 0 12px rgba(0,0,0,0.1); z-index: 1000; overflow-y: auto; transform: translateX(100%); transition: transform 0.3s; }
-        .admin-driver-page .driver-detail-modal.open { transform: translateX(0); }
-        .admin-driver-page .modal-header { padding: 24px; border-bottom: 1px solid #edf2f7; display: flex; justify-content: space-between; align-items: center; }
-        .admin-driver-page .modal-title { font-size: 20px; font-weight: 600; color: #2d3748; margin: 0; }
-        .admin-driver-page .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #718096; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
-        .admin-driver-page .close-btn:hover { background: #f8fafc; color: #2d3748; }
-        .admin-driver-page .modal-body { padding: 24px; }
-        .admin-driver-page .detail-section { margin-bottom: 28px; }
-        .admin-driver-page .section-title { font-size: 14px; font-weight: 600; color: #4a5568; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .admin-driver-page .detail-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f8fafc; }
-        .admin-driver-page .detail-label { color: #718096; font-size: 14px; }
-        .admin-driver-page .detail-value { color: #2d3748; font-weight: 500; font-size: 14px; }
-        .admin-driver-page .action-buttons { display: flex; gap: 12px; margin-top: 24px; }
-        .admin-driver-page .action-btn { flex: 1; padding: 12px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-        .admin-driver-page .btn-view-route { background: #38a169; color: white; }
-        .admin-driver-page .btn-view-route:hover { background: #2f855a; }
-        .admin-driver-page .btn-contact { background: #3182ce; color: white; }
-        .admin-driver-page .btn-contact:hover { background: #2c5282; }
-        .admin-driver-page .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 999; opacity: 0; visibility: hidden; transition: all 0.3s; }
-        .admin-driver-page .overlay.show { opacity: 1; visibility: visible; }
-        .admin-driver-page .no-drivers { grid-column: 1 / -1; text-align: center; padding: 120px 20px; color: #718096; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 500px; width: 100%; }
-        .admin-driver-page .no-drivers-icon { font-size: 80px; margin-bottom: 24px; opacity: 0.5; }
-        .admin-driver-page .message-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 2000; display: flex; align-items: center; justify-content: center; }
-        .admin-driver-page .message-modal-content { background: white; padding: 24px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
-        .admin-driver-page .message-textarea { width: 100%; padding: 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px; minHeight: 120px; box-sizing: border-box; margin-bottom: 16px; font-family: inherit; resize: vertical; }
-        .admin-driver-page .message-textarea:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.1); }
+        .admin-driver-page {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          padding: 20px;
+          background-color: #f5f7fa;
+          min-height: 100vh;
+        }
+        .admin-driver-page .page-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 24px;
+        }
+        .admin-driver-page .page-title {
+          font-size: 24px;
+          font-weight: 600;
+          color: #2d3748;
+          margin: 0;
+        }
+        .admin-driver-page .header-actions {
+          display: flex;
+          gap: 12px;
+        }
+        .admin-driver-page .btn-primary {
+          background: #38a169;
+          color: white;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .admin-driver-page .btn-primary:hover {
+          background: #2f855a;
+        }
+        .admin-driver-page .btn-secondary {
+          background: white;
+          color: #4a5568;
+          border: 1px solid #e2e8f0;
+          padding: 10px 20px;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .admin-driver-page .btn-secondary:hover {
+          background: #f8fafc;
+        }
+        .admin-driver-page .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+        .admin-driver-page .stat-card {
+          background: white;
+          border-radius: 8px;
+          padding: 20px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .admin-driver-page .stat-label {
+          font-size: 14px;
+          color: #4a5568;
+          margin-bottom: 8px;
+        }
+        .admin-driver-page .stat-value {
+          font-size: 28px;
+          font-weight: 700;
+          color: #1a202c;
+        }
+        .admin-driver-page .stat-subtitle {
+          font-size: 12px;
+          color: #718096;
+          margin-top: 4px;
+        }
+        .admin-driver-page .filter-bar {
+          display: flex;
+          gap: 12px;
+          margin-bottom: 20px;
+          align-items: center;
+        }
+        .admin-driver-page .filter-label {
+          font-size: 14px;
+          color: #4a5568;
+          font-weight: 500;
+        }
+        .admin-driver-page .filter-buttons {
+          display: flex;
+          gap: 8px;
+        }
+        .admin-driver-page .filter-btn {
+          padding: 8px 16px;
+          border: 1px solid #e2e8f0;
+          background: white;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 14px;
+          transition: all 0.2s;
+        }
+        .admin-driver-page .filter-btn.active {
+          background: #38a169;
+          color: white;
+          border-color: #38a169;
+        }
+        .admin-driver-page .filter-btn:hover:not(.active) {
+          background: #f8fafc;
+        }
+        .admin-driver-page .drivers-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+          gap: 20px;
+        }
+        .admin-driver-page .driver-card {
+          background: white;
+          border-radius: 8px;
+          padding: 20px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+          cursor: pointer;
+          transition: all 0.2s;
+          border: 2px solid transparent;
+        }
+        .admin-driver-page .driver-card:hover {
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+          transform: translateY(-2px);
+        }
+        .admin-driver-page .driver-card.selected {
+          border-color: #38a169;
+        }
+        .admin-driver-page .driver-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 16px;
+        }
+        .admin-driver-page .driver-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .admin-driver-page .driver-avatar {
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          background: #38a169;
+          color: white;
+          font-weight: 600;
+          font-size: 16px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .admin-driver-page .driver-details h3 {
+          margin: 0;
+          font-size: 16px;
+          color: #2d3748;
+          font-weight: 600;
+        }
+        .admin-driver-page .driver-id {
+          font-size: 13px;
+          color: #718096;
+          margin-top: 2px;
+        }
+        .admin-driver-page .status-badge {
+          padding: 6px 12px;
+          border-radius: 20px;
+          font-size: 12px;
+          font-weight: 600;
+          text-transform: capitalize;
+        }
+        .admin-driver-page .status-active {
+          background: #c6f6d5;
+          color: #38a169;
+        }
+        .admin-driver-page .status-idle {
+          background: #e2e8f0;
+          color: #4a5568;
+        }
+        .admin-driver-page .status-offline {
+          background: #fed7d7;
+          color: #e53e3e;
+        }
+        .admin-driver-page .driver-stats {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .admin-driver-page .driver-stat {
+          padding: 12px;
+          background: #f8fafc;
+          border-radius: 6px;
+        }
+        .admin-driver-page .driver-stat-label {
+          font-size: 12px;
+          color: #718096;
+          margin-bottom: 4px;
+        }
+        .admin-driver-page .driver-stat-value {
+          font-size: 16px;
+          font-weight: 600;
+          color: #2d3748;
+        }
+        .admin-driver-page .progress-section {
+          margin-bottom: 16px;
+        }
+        .admin-driver-page .progress-header {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 8px;
+          font-size: 13px;
+        }
+        .admin-driver-page .progress-label {
+          color: #4a5568;
+        }
+        .admin-driver-page .progress-value {
+          color: #2d3748;
+          font-weight: 600;
+        }
+        .admin-driver-page .progress-bar {
+          height: 8px;
+          background: #edf2f7;
+          border-radius: 4px;
+          overflow: hidden;
+        }
+        .admin-driver-page .progress-fill {
+          height: 100%;
+          background: #38a169;
+          border-radius: 4px;
+          transition: width 0.3s;
+        }
+        .admin-driver-page .driver-footer {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding-top: 16px;
+          border-top: 1px solid #edf2f7;
+          font-size: 13px;
+        }
+        .admin-driver-page .driver-location {
+          color: #4a5568;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .admin-driver-page .driver-time {
+          color: #718096;
+        }
+        .admin-driver-page .driver-detail-modal {
+          position: fixed;
+          top: 0;
+          right: 0;
+          width: 450px;
+          height: 100vh;
+          background: white;
+          box-shadow: -4px 0 12px rgba(0,0,0,0.1);
+          z-index: 1000;
+          overflow-y: auto;
+          transform: translateX(100%);
+          transition: transform 0.3s;
+        }
+        .admin-driver-page .driver-detail-modal.open {
+          transform: translateX(0);
+        }
+        .admin-driver-page .modal-header {
+          padding: 24px;
+          border-bottom: 1px solid #edf2f7;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .admin-driver-page .modal-title {
+          font-size: 20px;
+          font-weight: 600;
+          color: #2d3748;
+          margin: 0;
+        }
+        .admin-driver-page .close-btn {
+          background: none;
+          border: none;
+          font-size: 24px;
+          cursor: pointer;
+          color: #718096;
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+        }
+        .admin-driver-page .close-btn:hover {
+          background: #f8fafc;
+          color: #2d3748;
+        }
+        .admin-driver-page .modal-body {
+          padding: 24px;
+        }
+        .admin-driver-page .detail-section {
+          margin-bottom: 28px;
+        }
+        .admin-driver-page .section-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #4a5568;
+          margin-bottom: 16px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .admin-driver-page .detail-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 12px 0;
+          border-bottom: 1px solid #f8fafc;
+        }
+        .admin-driver-page .detail-label {
+          color: #718096;
+          font-size: 14px;
+        }
+        .admin-driver-page .detail-value {
+          color: #2d3748;
+          font-weight: 500;
+          font-size: 14px;
+        }
+        .admin-driver-page .action-buttons {
+          display: flex;
+          gap: 12px;
+          margin-top: 24px;
+        }
+        .admin-driver-page .action-btn {
+          flex: 1;
+          padding: 12px;
+          border: none;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .admin-driver-page .btn-view-route {
+          background: #38a169;
+          color: white;
+        }
+        .admin-driver-page .btn-view-route:hover {
+          background: #2f855a;
+        }
+        .admin-driver-page .btn-contact {
+          background: #3182ce;
+          color: white;
+        }
+        .admin-driver-page .btn-contact:hover {
+          background: #2c5282;
+        }
+        .admin-driver-page .overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.5);
+          z-index: 999;
+          opacity: 0;
+          visibility: hidden;
+          transition: all 0.3s;
+        }
+        .admin-driver-page .overlay.show {
+          opacity: 1;
+          visibility: visible;
+        }
+        .admin-driver-page .no-drivers {
+          grid-column: 1 / -1;
+          text-align: center;
+          padding: 120px 20px;
+          color: #718096;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 500px;
+          width: 100%;
+        }
+        .admin-driver-page .no-drivers-icon {
+          font-size: 80px;
+          margin-bottom: 24px;
+          opacity: 0.5;
+        }
+        .admin-driver-page .message-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.5);
+          z-index: 2000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .admin-driver-page .message-modal-content {
+          background: white;
+          padding: 24px;
+          border-radius: 12px;
+          width: 90%;
+          max-width: 500px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .admin-driver-page .message-textarea {
+          width: 100%;
+          padding: 12px;
+          border: 1px solid #cbd5e0;
+          border-radius: 6px;
+          font-size: 14px;
+          minHeight: 120px;
+          box-sizing: border-box;
+          margin-bottom: 16px;
+          font-family: inherit;
+          resize: vertical;
+        }
+        .admin-driver-page .message-textarea:focus {
+          outline: none;
+          border-color: #38a169;
+          box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.1);
+        }
+        .admin-driver-page .export-options {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin: 20px 0;
+        }
+        .admin-driver-page .export-option {
+          padding: 16px;
+          border: 2px solid #e2e8f0;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .admin-driver-page .export-option:hover {
+          border-color: #38a169;
+          background: #f8fafc;
+        }
+        .admin-driver-page .export-option-icon {
+          font-size: 24px;
+        }
+        .admin-driver-page .export-option-title {
+          font-weight: 600;
+          color: #2d3748;
+          margin-bottom: 4px;
+        }
+        .admin-driver-page .export-option-desc {
+          font-size: 12px;
+          color: #718096;
+        }
       `}</style>
 
       {/* Page Header */}
       <div className="page-header">
         <h1 className="page-title">Driver Management</h1>
         <div className="header-actions">
-          <button className="btn-secondary">Export Report</button>
+          <button
+            className="btn-secondary"
+            onClick={openExportModal}
+            title="Export driver data to CSV/PDF"
+          >
+            📊 Export Report
+          </button>
           <button
             className="btn-primary"
             onClick={() => window.location.reload()}
@@ -542,7 +1086,9 @@ const AdminDriverPage = () => {
                 <div className="detail-row">
                   <span className="detail-label">Route</span>
                   <span className="detail-value">
-                    {selectedDriver.currentRoute || "Not assigned"}
+                    {selectedDriver.routeData
+                      ? `${selectedDriver.routeData.binIds?.length || 0} stops assigned`
+                      : "Not assigned"}
                   </span>
                 </div>
                 <div className="detail-row">
@@ -712,6 +1258,100 @@ const AdminDriverPage = () => {
                 style={{ opacity: !messageText.trim() ? 0.6 : 1 }}
               >
                 Send Message
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Export Report Modal */}
+      {showExportModal && (
+        <div className="message-modal-overlay">
+          <div
+            className="message-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "600px" }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: "8px", color: "#2d3748" }}>
+              📊 Export Driver Report
+            </h3>
+            <p
+              style={{
+                color: "#718096",
+                fontSize: "14px",
+                marginBottom: "20px",
+              }}
+            >
+              Choose what data you want to export
+            </p>
+
+            <div className="export-options">
+              <div className="export-option" onClick={handleExportAllDrivers}>
+                <div className="export-option-icon">📋</div>
+                <div>
+                  <div className="export-option-title">All Drivers</div>
+                  <div className="export-option-desc">
+                    Export complete data for all {drivers.length} drivers (CSV
+                    format)
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="export-option"
+                onClick={handleExportActiveDrivers}
+              >
+                <div className="export-option-icon">✅</div>
+                <div>
+                  <div className="export-option-title">Active Drivers Only</div>
+                  <div className="export-option-desc">
+                    Export data for {activeDrivers} currently active drivers
+                  </div>
+                </div>
+              </div>
+
+              <div className="export-option" onClick={handleExportCurrentView}>
+                <div className="export-option-icon">👁️</div>
+                <div>
+                  <div className="export-option-title">
+                    Current View (Filtered)
+                  </div>
+                  <div className="export-option-desc">
+                    Export {filteredDrivers.length} drivers based on current
+                    filter
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="export-option"
+                onClick={handleExportPDF}
+                style={{ opacity: 0.6 }}
+              >
+                <div className="export-option-icon">📄</div>
+                <div>
+                  <div className="export-option-title">
+                    PDF Report (Coming Soon)
+                  </div>
+                  <div className="export-option-desc">
+                    Professional PDF report with charts and summaries
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                marginTop: "20px",
+              }}
+            >
+              <button
+                className="btn-secondary"
+                onClick={() => setShowExportModal(false)}
+              >
+                Cancel
               </button>
             </div>
           </div>

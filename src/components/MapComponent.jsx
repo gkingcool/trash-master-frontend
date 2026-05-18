@@ -15,11 +15,11 @@ L.Icon.Default.mergeOptions({
 // ✅ Helper to safely extract coordinates from bin
 const getBinCoordinates = (bin) => {
   // Try flat properties first (from getters)
-  if (bin.latitude && bin.longitude) {
+  if (bin.latitude != null && bin.longitude != null) {
     return [bin.latitude, bin.longitude];
   }
   // Try nested Location object
-  if (bin.location && bin.location.lat && bin.location.lon) {
+  if (bin.location && bin.location.lat != null && bin.location.lon != null) {
     return [bin.location.lat, bin.location.lon];
   }
   // Return null if no valid coordinates
