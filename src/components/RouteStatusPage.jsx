@@ -21,8 +21,11 @@ const RouteStatusPage = () => {
       const response = await axios.get("http://localhost:8080/api/routes/all");
       // Sort by date (newest first) then by status
       const sortedRoutes = response.data.sort((a, b) => {
-        if (a.routeDate !== b.routeDate)
-          return b.routeDate.localeCompare(a.routeDate);
+        // Normalize nulls to empty strings so localeCompare works safely
+  const dateA = a.routeDate || "";
+  const dateB = b.routeDate || "";
+        if (dateA !== dateB)
+          return dateB.localeCompare(dateA);
         return a.status.localeCompare(b.status);
       });
       setRoutes(sortedRoutes);
