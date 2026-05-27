@@ -12,7 +12,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require("leaflet/dist/images/marker-shadow.png"),
 });
 
-// ✅ Helper to safely extract coordinates from bin
+// Helper to safely extract coordinates from bin
 const getBinCoordinates = (bin) => {
   // Try flat properties first (from getters)
   if (bin.latitude != null && bin.longitude != null) {
@@ -28,6 +28,7 @@ const getBinCoordinates = (bin) => {
 
 const MapComponent = ({
   bins = [],
+  otherBins = [], // Non-route bins shown for context (gray/dashed)
   center = [47.6101, -122.2015], // Bellevue, WA
   zoom = 13,
   height = "350px",
@@ -60,9 +61,40 @@ const MapComponent = ({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
 
+        {/* Non-route bins — shown for map context only */}
+        {otherBins.map((bin) => {
+          const coords = getBinCoordinates(bin);
+          if (!coords) return null;
+          return (
+            <CircleMarker
+              key={`other-${bin.id || bin.binId}`}
+              center={coords}
+              radius={8}
+              pathOptions={{
+                fillColor: "#718096",
+                color: "#fff",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.85,
+              }}
+            >
+              <Popup>
+                <strong>{bin.binId}</strong>
+                <br />
+                Location: {bin.locationName}
+                <br />
+                Fill Level: {bin.fillLevel ?? 0}%<br />
+                <span style={{ color: "#718096", fontSize: "12px" }}>
+                  ⚪ Not on today's route
+                </span>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
+
         {bins.map((bin) => {
           const coords = getBinCoordinates(bin);
-          // ✅ Skip bins without valid coordinates
+          // Skip bins without valid coordinates
           if (!coords) return null;
 
           return (
@@ -110,6 +142,27 @@ const MapComponent = ({
             boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
           }}
         >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              marginBottom: "4px",
+            }}
+          >
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#a0aec0",
+                border: "1.5px dashed #718096",
+              }}
+            ></div>
+            <span style={{ fontSize: "12px", color: "#4a5568" }}>
+              Not on route
+            </span>
+          </div>
           <div
             style={{
               display: "flex",

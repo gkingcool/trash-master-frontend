@@ -8,10 +8,18 @@ const RouteStatusPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useState({
+    routeDate: "",
+    driverId: "",
+    truckId: "",
+    status: "",
+  });
 
   // Fetch all routes on mount
   useEffect(() => {
     fetchRoutes();
+    const interval = setInterval(fetchRoutes, 15000); // poll every 15s
+    return () => clearInterval(interval);
   }, []);
 
   const fetchRoutes = async () => {
@@ -50,6 +58,38 @@ const RouteStatusPage = () => {
         console.error("Error deleting route:", err);
         alert("Failed to delete route");
       }
+    }
+  };
+
+  const handleSearch = async () => {
+    try {
+      setLoading(true);
+      // Remove empty fields so backend doesn't filter by them
+      const payload = Object.fromEntries(
+        Object.entries(searchParams).filter(([_, v]) => v !== ""),
+      );
+      const response = await axios.post(
+        "http://localhost:8080/api/routes/search",
+        payload,
+      );
+      setRoutes(response.data);
+      setLoading(false);
+    } catch (err) {
+      alert("Search failed");
+    }
+  };
+
+  const handleStatusOverride = async (routeId, newStatus) => {
+    if (!window.confirm(`Force route status to ${newStatus}?`)) return;
+    try {
+      // PATCH /api/routes/{id}/status
+      await axios.patch(
+        `http://localhost:8080/api/routes/${routeId}/status?status=${newStatus}`,
+      );
+      fetchRoutes();
+      alert("Status overridden successfully");
+    } catch (err) {
+      alert("Failed to override status");
     }
   };
 
@@ -125,6 +165,77 @@ const RouteStatusPage = () => {
             overflow: "hidden",
           }}
         >
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              marginBottom: "20px",
+              flexWrap: "wrap",
+            }}
+          >
+            <input
+              type="date"
+              onChange={(e) =>
+                setSearchParams((p) => ({ ...p, routeDate: e.target.value }))
+              }
+              style={{
+                padding: "8px",
+                borderRadius: "4px",
+                border: "1px solid #cbd5e0",
+              }}
+            />
+            <input
+              placeholder="Driver ID"
+              onChange={(e) =>
+                setSearchParams((p) => ({ ...p, driverId: e.target.value }))
+              }
+              style={{
+                padding: "8px",
+                borderRadius: "4px",
+                border: "1px solid #cbd5e0",
+              }}
+            />
+            <input
+              placeholder="Truck ID"
+              onChange={(e) =>
+                setSearchParams((p) => ({ ...p, truckId: e.target.value }))
+              }
+              style={{
+                padding: "8px",
+                borderRadius: "4px",
+                border: "1px solid #cbd5e0",
+              }}
+            />
+            <select
+              onChange={(e) =>
+                setSearchParams((p) => ({ ...p, status: e.target.value }))
+              }
+              style={{
+                padding: "8px",
+                borderRadius: "4px",
+                border: "1px solid #cbd5e0",
+              }}
+            >
+              <option value="">All Statuses</option>
+              <option value="CREATED">CREATED</option>
+              <option value="IN_PROGRESS">IN_PROGRESS</option>
+              <option value="COMPLETED">COMPLETED</option>
+            </select>
+            <button
+              onClick={handleSearch}
+              style={{
+                padding: "8px 16px",
+                background: "#3182ce",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+              }}
+            >
+              🔍 Search
+            </button>
+          </div>
+
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr
@@ -204,8 +315,13 @@ const RouteStatusPage = () => {
                   <td style={{ padding: "12px", color: "#2d3748" }}>
                     {route.driverId || "Unassigned"}
                   </td>
-                  <td style={{ padding: "12px", color: "#2d3748" }}>
+                  {/* <td style={{ padding: "12px", color: "#2d3748" }}>
                     {route.totalStops}
+                  </td> */}
+                  <td style={{ padding: "12px", color: "#2d3748" }}>
+                    {(route.steps || []).filter(
+                      (s) => s.type === "BIN" && s.binFillLevel > 0,
+                    ).length || route.totalStops}
                   </td>
                   <td style={{ padding: "12px" }}>
                     <span
@@ -255,6 +371,25 @@ const RouteStatusPage = () => {
                     >
                       🗑️ Delete
                     </button>
+                    <select
+                      onChange={(e) =>
+                        handleStatusOverride(route.id, e.target.value)
+                      }
+                      style={{
+                        padding: "6px 8px",
+                        borderRadius: "4px",
+                        border: "1px solid #cbd5e0",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                        background: "white",
+                        marginLeft: "8px",
+                      }}
+                    >
+                      <option value="">Override Status</option>
+                      <option value="CREATED">Force CREATED</option>
+                      <option value="IN_PROGRESS">Force IN_PROGRESS</option>
+                      <option value="COMPLETED">Force COMPLETED</option>
+                    </select>
                   </td>
                 </tr>
               ))}

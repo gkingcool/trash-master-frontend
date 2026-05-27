@@ -35,77 +35,189 @@ const depotMarkerIcon = L.icon({
   shadowSize: [41, 41],
 });
 
+const dumpMarkerIcon = L.divIcon({
+  className: "",
+  html: `<div style="position: relative; width: 25px; height: 41px;">
+    <img
+      src="${markerIcon}"
+      style="
+        width: 25px;
+        height: 41px;
+        filter: invert(0) sepia(100%) saturate(300%) hue-rotate(90deg) brightness(0.8);
+      "
+    />
+  </div>`,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
+
 const DriverTrackingPage = () => {
   const { driverId } = useParams();
   const navigate = useNavigate();
   const [route, setRoute] = useState(null);
   const [bins, setBins] = useState([]);
+  const [allOtherBins, setAllOtherBins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // ✅ State to store dynamic depot coordinates
+  // State to store dynamic depot coordinates
   // Default to Bellevue, but will be overwritten by route data
   const [depotCoordinates, setDepotCoordinates] = useState([
     47.6101, -122.2015,
   ]);
   const [depotName, setDepotName] = useState("Bellevue Facility");
 
-  // ✅ State to store the road-based route coordinates
+  // State to store the road-based route coordinates
   const [roadPath, setRoadPath] = useState(null);
 
   useEffect(() => {
     fetchRouteData();
 
-    // ✅ Add polling to refresh data every 15 seconds
-    const interval = setInterval(fetchRouteData, 15000);
+    // Poll every 5s to reflect driver pickups in near real-time
+    const interval = setInterval(fetchRouteData, 5000);
 
-    return () => clearInterval(interval); // Cleanup on unmount
+    return () => clearInterval(interval);
   }, [driverId]);
 
-  // ✅ Function to fetch road-based route from OSRM
-  // ✅ FIX: Now accepts startCoords as an argument to avoid using stale state
-  const fetchRoadPath = async (routeBins, startCoords) => {
+  const fetchRoadPath = async (activeRoute, startCoords) => {
     try {
-      // Create a sequence of coordinates: Depot -> Bins
+      // Only include BIN stops — dump trips distort the visual route
+      const routeSteps = (activeRoute.steps || []).filter(
+        (s) => (s.type === "BIN" && s.binFillLevel > 0) || s.type === "DUMP",
+      );
+      if (routeSteps.length === 0) return;
+
       const coords = [
-        `${startCoords[1]},${startCoords[0]}`, // Start at the passed Depot coordinates
-        ...routeBins.map((b) => {
-          // Handle both flat and nested location structures
-          const lat = b.latitude || b.location?.lat;
-          const lon = b.longitude || b.location?.lon;
-          return `${lon},${lat}`;
-        }),
+        `${startCoords[1]},${startCoords[0]}`, // depot start
+        ...routeSteps.map((s) => `${s.lon},${s.lat}`),
+        `${startCoords[1]},${startCoords[0]}`, // return to depot
       ];
 
-      const coordsString = coords.join(";");
-
-      // Fetch from OSRM
       const response = await axios.get(
-        `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`,
+        `https://router.project-osrm.org/route/v1/driving/${coords.join(";")}?overview=full&geometries=geojson`,
       );
 
-      if (response.data.routes && response.data.routes.length > 0) {
-        // OSRM returns [lon, lat], Leaflet needs [lat, lon]
-        const geometry = response.data.routes[0].geometry.coordinates.map(
-          (coord) => [coord[1], coord[0]],
+      if (response.data.routes?.length > 0) {
+        setRoadPath(
+          response.data.routes[0].geometry.coordinates.map((c) => [c[1], c[0]]),
         );
-        setRoadPath(geometry);
       }
     } catch (err) {
       console.error("Error fetching road path:", err);
     }
   };
 
+  // const fetchRouteData = async () => {
+  //   try {
+  //     // 1. Fetch current route for this driver
+  //     const response = await axios.get(
+  //       `http://localhost:8080/api/routes/driver/${driverId}`,
+  //     );
+  //     const routes = response.data;
+  //     // const activeRoute = routes.find(
+  //     //   (r) => r.status === "CREATED" || r.status === "IN_PROGRESS",
+  //     // );
+  //     const today = new Date().toISOString().split("T")[0];
+  //     const activeRoute =
+  //       routes.find(
+  //         (r) => r.status === "CREATED" || r.status === "IN_PROGRESS",
+  //       ) ||
+  //       routes.find((r) => r.status === "COMPLETED" && r.routeDate === today);
+
+  //     if (!activeRoute) {
+  //       setError("No active route found for this driver.");
+  //       setLoading(false);
+  //       return;
+  //     }
+
+  //     setRoute(activeRoute);
+
+  //     console.log(
+  //       "Route steps:",
+  //       activeRoute.steps?.map((s) => ({
+  //         type: s.type,
+  //         action: s.action,
+  //         binFillLevel: s.binFillLevel,
+  //       })),
+  //     );
+
+  //     // ✅ Find the START station step to get the REAL depot location
+  //     let currentStationStep = null;
+  //     if (activeRoute.steps && activeRoute.steps.length > 0) {
+  //       currentStationStep = activeRoute.steps.find(
+  //         (step) => step.type === "STATION" && step.action === "START",
+  //       );
+
+  //       if (currentStationStep) {
+  //         const depotCoords = [currentStationStep.lat, currentStationStep.lon];
+
+  //         // Update state (this will move the marker)
+  //         setDepotCoordinates(depotCoords);
+
+  //         // Determine facility name
+  //         const facilityName = getFacilityName(
+  //           currentStationStep.lat,
+  //           currentStationStep.lon,
+  //         );
+  //         setDepotName(facilityName);
+  //       }
+  //     }
+
+  //     // 2. Fetch all bins, split into route bins and context bins
+  //     if (activeRoute.binIds && activeRoute.binIds.length > 0) {
+  //       const binPromises = activeRoute.binIds.map((binId) =>
+  //         axios.get(`http://localhost:8080/api/bins/${binId}`),
+  //       );
+  //       const binResponses = await Promise.all(binPromises);
+  //       const fetchedBins = binResponses.map((res) => res.data);
+  //       setBins(fetchedBins);
+
+  //       // Also fetch all bins to show non-route ones on the map
+  //       const allBinsRes = await axios.get("http://localhost:8080/api/bins");
+  //       setAllOtherBins(
+  //         allBinsRes.data.filter((b) => !activeRoute.binIds.includes(b.binId)),
+  //       );
+
+  //       // // 3. Fetch road path once bins are loaded
+  //       // // ✅ FIX: Pass the coordinates we just found, NOT the state variable (which hasn't updated yet)
+  //       // const startCoords = currentStationStep
+  //       //   ? [currentStationStep.lat, currentStationStep.lon]
+  //       //   : [47.6101, -122.2015];
+
+  //       fetchRoadPath(activeRoute, startCoords);
+  //     }
+  //   } catch (err) {
+  //     console.error("Error fetching route data:", err);
+  //     setError(
+  //       "Failed to load route data. Driver may not have an active route.",
+  //     );
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
   const fetchRouteData = async () => {
     try {
-      // 1. Fetch current route for this driver
-      const response = await axios.get(
-        `http://localhost:8080/api/routes/driver/${driverId}`,
+      // Use search endpoint to find BOTH "CREATED" and "IN_PROGRESS" routes
+      const response = await axios.post(
+        "http://localhost:8080/api/routes/search",
+        {
+          driverId: driverId,
+        },
       );
+
       const routes = response.data;
-      const activeRoute = routes.find(
-        (r) => r.status === "CREATED" || r.status === "IN_PROGRESS",
-      );
+      const today = new Date().toISOString().split("T")[0];
+
+      const activeRoute =
+        routes.find(
+          (r) =>
+            (r.status === "CREATED" || r.status === "IN_PROGRESS") &&
+            r.routeDate === today,
+        ) ||
+        routes.find(
+          (r) => r.status === "CREATED" || r.status === "IN_PROGRESS",
+        );
 
       if (!activeRoute) {
         setError("No active route found for this driver.");
@@ -115,7 +227,6 @@ const DriverTrackingPage = () => {
 
       setRoute(activeRoute);
 
-      // ✅ Find the START station step to get the REAL depot location
       let currentStationStep = null;
       if (activeRoute.steps && activeRoute.steps.length > 0) {
         currentStationStep = activeRoute.steps.find(
@@ -124,11 +235,7 @@ const DriverTrackingPage = () => {
 
         if (currentStationStep) {
           const depotCoords = [currentStationStep.lat, currentStationStep.lon];
-
-          // Update state (this will move the marker)
           setDepotCoordinates(depotCoords);
-
-          // Determine facility name
           const facilityName = getFacilityName(
             currentStationStep.lat,
             currentStationStep.lon,
@@ -137,7 +244,8 @@ const DriverTrackingPage = () => {
         }
       }
 
-      // 2. Fetch all bins in the route
+      const allBinsRes = await axios.get("http://localhost:8080/api/bins");
+
       if (activeRoute.binIds && activeRoute.binIds.length > 0) {
         const binPromises = activeRoute.binIds.map((binId) =>
           axios.get(`http://localhost:8080/api/bins/${binId}`),
@@ -146,13 +254,18 @@ const DriverTrackingPage = () => {
         const fetchedBins = binResponses.map((res) => res.data);
         setBins(fetchedBins);
 
-        // 3. Fetch road path once bins are loaded
-        // ✅ FIX: Pass the coordinates we just found, NOT the state variable (which hasn't updated yet)
+        const allBinsRes = await axios.get("http://localhost:8080/api/bins");
+        setAllOtherBins(
+          allBinsRes.data.filter((b) => !activeRoute.binIds.includes(b.binId)),
+        );
+
         const startCoords = currentStationStep
           ? [currentStationStep.lat, currentStationStep.lon]
           : [47.6101, -122.2015];
 
-        fetchRoadPath(fetchedBins, startCoords);
+        fetchRoadPath(activeRoute, startCoords);
+      } else {
+        setAllOtherBins(allBinsRes.data);
       }
     } catch (err) {
       console.error("Error fetching route data:", err);
@@ -164,49 +277,36 @@ const DriverTrackingPage = () => {
     }
   };
 
-  // ✅ Helper to determine facility name from coordinates
-  const getFacilityName = (lat, lon) => {
-    const facilities = {
-      "central-maintenance": [47.6101, -122.2015],
-      "south-renton": [47.4829, -122.2171],
-      "north-kirkland": [47.6815, -122.2087],
-      "east-issaquah": [47.5301, -122.0326],
-      "west-seattle": [47.5707, -122.3862],
-    };
-    let closestFacility = "Central Maintenance Facility - Bellevue";
-    let minDistance = Infinity;
-
-    for (const [name, coords] of Object.entries(facilities)) {
-      const distance = Math.sqrt(
-        Math.pow(coords[0] - lat, 2) + Math.pow(coords[1] - lon, 2),
+  const handleAdminForcePickup = async (binId) => {
+    if (!window.confirm(`Force confirm pickup for ${binId}?`)) return;
+    try {
+      // POST /api/routes/{routeId}/pickup/{binId}
+      await axios.post(
+        `http://localhost:8080/api/routes/${route.id}/pickup/${binId}`,
       );
-      if (distance < minDistance) {
-        minDistance = distance;
-        switch (name) {
-          case "central-maintenance":
-            closestFacility = "Central Maintenance Facility - Bellevue";
-            break;
-          case "south-renton":
-            closestFacility = "South Depot - Renton";
-            break;
-          case "north-kirkland":
-            closestFacility = "North Depot - Kirkland";
-            break;
-          case "east-issaquah":
-            closestFacility = "East Depot - Issaquah";
-            break;
-          case "west-seattle":
-            closestFacility = "West Depot - Seattle";
-            break;
-          default:
-            closestFacility = "Central Maintenance Facility - Bellevue";
-        }
-      }
+      alert(`Admin Override: Bin ${binId} marked as picked up.`);
+      fetchRouteData(); // Refresh map
+    } catch (err) {
+      alert("Failed to force pickup");
     }
-    return closestFacility;
   };
 
-  // ✅ Helper to determine bin color
+  const handleAdminForceSkip = async (binId) => {
+    if (!window.confirm(`Force skip ${binId}? Penalty will be applied.`))
+      return;
+    try {
+      // POST /api/routes/skip/{binId}
+      await axios.post(`http://localhost:8080/api/routes/skip/${binId}`);
+      alert(`Admin Override: Bin ${binId} skipped.`);
+      fetchRouteData();
+    } catch (err) {
+      alert("Failed to force skip");
+    }
+  };
+
+  const getFacilityName = () => "🏢 Starting Depot (Bellevue Facility)";
+
+  // Helper to determine bin color
   const getBinColor = (fillLevel) => {
     if (fillLevel === 0) return "#718096"; // Grey (Empty)
     if (fillLevel >= 90) return "#e53e3e"; // Red (Critical)
@@ -258,20 +358,25 @@ const DriverTrackingPage = () => {
     );
   }
 
-  const completedIds = route?.completedBinIds || [];
-  const completedStops = completedIds.length;
+  // Bins confirmed picked up = fill level is now 0 (updated by confirmBinPickup endpoint)
+  const totalRouteBins = bins.length;
+  const completedStops = bins.filter((b) => (b.fillLevel ?? 0) === 0).length;
+  const remainingStops = totalRouteBins - completedStops;
 
-  // Calculate total stops from steps (bins only) or bin list
-  const totalStops =
-    route.steps?.filter((step) => step.type === "BIN").length || bins.length;
+  const midRouteDumps =
+    route.steps?.filter((s) => s.type === "DUMP" && s.action === "EMPTY_TRUCK")
+      .length || 0;
 
+  const totalStops = totalRouteBins + midRouteDumps;
   const progressPercent =
-    totalStops > 0 ? (completedStops / totalStops) * 100 : 0;
+    totalRouteBins > 0 ? (completedStops / totalRouteBins) * 100 : 0;
 
-  // Coordinates for straight-line fallback (uses state, which will be updated)
   const straightLinePath = [
     depotCoordinates,
-    ...bins.map((b) => getBinCoords(b)).filter(Boolean),
+    ...(route.steps || [])
+      .filter((s) => s.type === "BIN" || s.type === "DUMP")
+      .map((s) => [s.lat, s.lon]),
+    depotCoordinates, // return to depot
   ];
 
   return (
@@ -312,12 +417,44 @@ const DriverTrackingPage = () => {
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               />
 
+              {/* Non-route bins — context only */}
+              {allOtherBins.map((bin) => {
+                const lat = bin.location?.lat ?? bin.latitude;
+                const lon = bin.location?.lon ?? bin.longitude;
+                if (!lat || !lon) return null;
+                return (
+                  <CircleMarker
+                    key={`other-${bin.binId}`}
+                    center={[lat, lon]}
+                    radius={8}
+                    pathOptions={{
+                      fillColor: "#718096",
+                      color: "#fff",
+                      weight: 2,
+                      opacity: 1,
+                      fillOpacity: 0.85,
+                    }}
+                  >
+                    <Popup>
+                      <strong>{bin.binId}</strong>
+                      <br />
+                      {bin.locationName}
+                      <br />
+                      Fill: {bin.fillLevel ?? 0}%<br />
+                      <span style={{ color: "#718096", fontSize: "11px" }}>
+                        ⚪ Not on today's route
+                      </span>
+                    </Popup>
+                  </CircleMarker>
+                );
+              })}
+
               {/* Bin Markers */}
               {bins.map((bin) => {
                 const coords = getBinCoords(bin);
                 if (!coords) return null;
 
-                const isCompleted = completedIds.includes(bin.binId);
+                const isCompleted = (bin.fillLevel ?? 0) === 0;
                 const shouldBeGrey = isCompleted || bin.fillLevel === 0;
 
                 return (
@@ -333,19 +470,56 @@ const DriverTrackingPage = () => {
                     fillOpacity={isCompleted ? 0.8 : 0.9}
                   >
                     <Popup>
-                      <strong>{bin.binId}</strong>
+                      <strong>{bin.binId} </strong>
                       <br />
                       {bin.locationName}
                       <br />
                       Fill: {bin.fillLevel}%
                       <br />
-                      Status: {shouldBeGrey ? "✅ Completed" : "⏳ Pending"}
+                      Status: {shouldBeGrey ? "✅ Completed " : "⏳ Pending "}
+                      {/* ADMIN OVERRIDE BUTTONS */}
+                      {!shouldBeGrey && (
+                        <div
+                          style={{
+                            marginTop: "8px",
+                            display: "flex",
+                            gap: "4px",
+                          }}
+                        >
+                          <button
+                            onClick={() => handleAdminForcePickup(bin.binId)}
+                            style={{
+                              padding: "2px 6px",
+                              background: "#c6f6d5",
+                              border: "none",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              fontSize: "11px",
+                            }}
+                          >
+                            ✅ Force Pickup
+                          </button>
+                          <button
+                            onClick={() => handleAdminForceSkip(bin.binId)}
+                            style={{
+                              padding: "2px 6px",
+                              background: "#fed7d7",
+                              border: "none",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              fontSize: "11px",
+                            }}
+                          >
+                            ❌ Force Skip
+                          </button>
+                        </div>
+                      )}
                     </Popup>
                   </CircleMarker>
                 );
               })}
 
-              {/* ✅ Route Path: Use OSRM road path if loaded, otherwise fallback */}
+              {/* Route Path: Use OSRM road path if loaded, otherwise fallback */}
               <Polyline
                 positions={roadPath || straightLinePath}
                 color="#3182ce"
@@ -361,6 +535,30 @@ const DriverTrackingPage = () => {
                   {depotName}
                 </Popup>
               </Marker>
+
+              {/* Green markers for transfer/dump stations */}
+              {(route.steps || [])
+                .filter((s) => s.type === "DUMP")
+                .map((step, i) => (
+                  <Marker
+                    key={`dump-${i}`}
+                    position={[step.lat, step.lon]}
+                    icon={dumpMarkerIcon}
+                  >
+                    <Popup>
+                      <strong>
+                        🏭 {step.stationName || "Transfer Station"}
+                      </strong>
+                      <br />
+                      Truck load before dump:{" "}
+                      {step.currentTruckLoadYards?.toFixed(1)} yds³
+                      <br />
+                      {step.action === "EMPTY_TRUCK"
+                        ? "Mid-route dump"
+                        : "End of route"}
+                    </Popup>
+                  </Marker>
+                ))}
             </MapContainer>
           </div>
 
@@ -379,7 +577,7 @@ const DriverTrackingPage = () => {
                     </strong>
                     <span style={{ color: "#718096", margin: "0 8px" }}>/</span>
                     <span style={{ fontSize: "18px", color: "#718096" }}>
-                      {totalStops} stops
+                      {totalRouteBins} stops
                     </span>
                   </span>
                   <span style={styles.progressPercent}>
@@ -463,12 +661,31 @@ const DriverTrackingPage = () => {
                     </span>
                   </div>
                   <div>
-                    <div style={styles.summaryValue}>
-                      {totalStops - completedStops}
-                    </div>
+                    <div style={styles.summaryValue}>{remainingStops}</div>
                     <div style={styles.summaryLabel}>Remaining</div>
                   </div>
                 </div>
+
+                {midRouteDumps > 0 && (
+                  <div style={styles.summaryItem}>
+                    <div
+                      style={{
+                        ...styles.summaryIcon,
+                        backgroundColor: "#c6f6d5",
+                      }}
+                    >
+                      <span style={{ color: "#38a169", fontSize: "20px" }}>
+                        🏭
+                      </span>
+                    </div>
+                    <div>
+                      <div style={styles.summaryValue}>{midRouteDumps}</div>
+                      <div style={styles.summaryLabel}>
+                        Dump Trip{midRouteDumps !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

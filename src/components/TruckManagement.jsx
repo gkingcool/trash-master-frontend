@@ -3,9 +3,13 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const API_BASE_URL = "http://localhost:8080/api/trucks";
+const ROUTES_API_URL = "http://localhost:8080/api/routes/all";
+const BINS_API_URL = "http://localhost:8080/api/bins";
 
 const TruckManagement = () => {
   const [trucks, setTrucks] = useState([]);
+  const [routes, setRoutes] = useState([]);
+  const [bins, setBins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -13,23 +17,63 @@ const TruckManagement = () => {
   const [newTruckId, setNewTruckId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch Trucks on Load
+  // ✅ Fetch Trucks, Routes, and Bins on Load & Poll every 15 seconds
   useEffect(() => {
-    fetchTrucks();
+    fetchData();
+    const interval = setInterval(fetchData, 15000); // Refresh every 15s
+    return () => clearInterval(interval);
   }, []);
 
-  const fetchTrucks = async () => {
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(API_BASE_URL);
-      setTrucks(response.data);
+      // Fetch all 3 resources in parallel
+      const [trucksRes, routesRes, binsRes] = await Promise.all([
+        axios.get(API_BASE_URL),
+        axios.get(ROUTES_API_URL),
+        axios.get(BINS_API_URL),
+      ]);
+
+      setTrucks(trucksRes.data);
+      setRoutes(routesRes.data);
+      setBins(binsRes.data);
       setError(null);
     } catch (err) {
-      console.error("Error fetching trucks:", err);
-      setError("Failed to load trucks. Is the backend running?");
+      console.error("Error fetching data:", err);
+      setError("Failed to load fleet data. Is the backend running?");
     } finally {
       setLoading(false);
     }
+  };
+
+  // ✅ Calculate Real-Time Truck Load
+  const calculateCurrentLoad = (truck) => {
+    // 1. Base load is what's currently in the truck DB (starting load for today)
+    let currentLoad = truck.currentCompactedYards || 0;
+
+    // 2. Find the active route for this truck (IN_PROGRESS or CREATED)
+    const activeRoute = routes.find(
+      (r) =>
+        r.truckId === truck.truckId &&
+        (r.status === "IN_PROGRESS" || r.status === "CREATED"),
+    );
+
+    // 3. If on a route, add the weight of bins that have been picked up (fillLevel === 0)
+    if (activeRoute && activeRoute.steps) {
+      const binSteps = activeRoute.steps.filter((s) => s.type === "BIN");
+
+      for (const step of binSteps) {
+        const bin = bins.find((b) => b.binId === step.binId);
+        // If the bin exists and its fill level is 0, the driver has picked it up
+        if (bin && bin.fillLevel === 0 && step.binFillLevel) {
+          const looseYards =
+            (bin.capacityYards || 0) * (step.binFillLevel / 100);
+          currentLoad += looseYards / 4.0; // Apply 4:1 compaction ratio
+        }
+      }
+    }
+
+    return currentLoad;
   };
 
   const handleAddTruck = async (e) => {
@@ -38,19 +82,15 @@ const TruckManagement = () => {
       alert("Please enter a Truck ID");
       return;
     }
-
     setIsSubmitting(true);
     try {
-      // We just create the asset with 0 load.
       await axios.post(API_BASE_URL, {
         truckId: newTruckId,
-        assignedDriverId: null, // Or empty string depending on your DB schema preference
+        assignedDriverId: null,
         currentCompactedYards: 0.0,
       });
-
-      // Reset form and refresh list
       setNewTruckId("");
-      fetchTrucks();
+      fetchData();
       alert(`✅ Truck ${newTruckId} added successfully!`);
     } catch (err) {
       console.error("Error adding truck:", err);
@@ -65,10 +105,9 @@ const TruckManagement = () => {
   const handleDeleteTruck = async (truckId) => {
     if (!window.confirm(`Are you sure you want to delete truck ${truckId}?`))
       return;
-
     try {
       await axios.delete(`${API_BASE_URL}/${truckId}`);
-      fetchTrucks();
+      fetchData();
       alert(`🗑️ Truck ${truckId} deleted.`);
     } catch (err) {
       console.error("Error deleting truck:", err);
@@ -80,7 +119,7 @@ const TruckManagement = () => {
     <div style={styles.container}>
       <div style={styles.header}>
         <h2 style={styles.title}>🚛 Fleet Management</h2>
-        <button onClick={fetchTrucks} style={styles.refreshBtn}>
+        <button onClick={fetchData} style={styles.refreshBtn}>
           🔄 Refresh
         </button>
       </div>
@@ -103,7 +142,7 @@ const TruckManagement = () => {
             />
           </div>
           <button type="submit" disabled={isSubmitting} style={styles.addBtn}>
-            {isSubmitting ? "Adding..." : "➕ Add Truck"}
+            {isSubmitting ? "Adding..." : "+ Add Truck"}
           </button>
         </form>
         <p style={styles.helperText}>
@@ -132,33 +171,86 @@ const TruckManagement = () => {
                 </tr>
               </thead>
               <tbody>
-                {trucks.map((truck) => (
-                  <tr key={truck.id} style={styles.tr}>
-                    <td style={styles.td}>
-                      <strong>{truck.truckId}</strong>
-                    </td>
-                    <td style={styles.td}>
-                      {truck.assignedDriverId ? (
-                        <span style={{ color: "#38a169", fontWeight: "bold" }}>
-                          {truck.assignedDriverId}
-                        </span>
-                      ) : (
-                        <span style={{ color: "#718096" }}>Unassigned</span>
-                      )}
-                    </td>
-                    <td style={styles.td}>
-                      {truck.currentCompactedYards} / {truck.maxCapacityYards}
-                    </td>
-                    <td style={styles.td}>
-                      <button
-                        onClick={() => handleDeleteTruck(truck.truckId)}
-                        style={styles.deleteBtn}
-                      >
-                        🗑️ Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {trucks.map((truck) => {
+                  // Calculate live load for this truck
+                  const currentLoad = calculateCurrentLoad(truck);
+                  const isActiveRoute = routes.some(
+                    (r) =>
+                      r.truckId === truck.truckId && r.status === "IN_PROGRESS",
+                  );
+
+                  return (
+                    <tr key={truck.id} style={styles.tr}>
+                      <td style={styles.td}>
+                        <strong>{truck.truckId}</strong>
+                      </td>
+                      <td style={styles.td}>
+                        {truck.assignedDriverId ? (
+                          <span
+                            style={{ color: "#38a169", fontWeight: "bold" }}
+                          >
+                            {truck.assignedDriverId}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#718096" }}>Unassigned</span>
+                        )}
+                      </td>
+                      <td style={styles.td}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontWeight: isActiveRoute ? "700" : "400",
+                              color: isActiveRoute ? "#dd6b20" : "#2d3748",
+                            }}
+                          >
+                            {currentLoad.toFixed(1)}
+                          </span>
+                          <span style={{ color: "#a0aec0" }}>
+                            / {truck.maxCapacityYards}
+                          </span>
+                          {isActiveRoute && (
+                            <span
+                              style={{
+                                fontSize: "10px",
+                                background: "#feebc8",
+                                color: "#c05621",
+                                padding: "2px 6px",
+                                borderRadius: "4px",
+                              }}
+                            >
+                              On Route
+                            </span>
+                          )}
+                        </div>
+                        {/* Visual Load Bar */}
+                        <div style={styles.loadBarBg}>
+                          <div
+                            style={{
+                              ...styles.loadBarFill,
+                              width: `${Math.min((currentLoad / truck.maxCapacityYards) * 100, 100)}%`,
+                              backgroundColor:
+                                currentLoad >= 25.5 ? "#e53e3e" : "#38a169", // Red if near 85% capacity (25.5/30)
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td style={styles.td}>
+                        <button
+                          onClick={() => handleDeleteTruck(truck.truckId)}
+                          style={styles.deleteBtn}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -172,7 +264,7 @@ const TruckManagement = () => {
 const styles = {
   container: {
     padding: "20px",
-    maxWidth: "900px",
+    maxWidth: "1000px",
     margin: "0 auto",
     fontFamily: "sans-serif",
   },
@@ -246,7 +338,7 @@ const styles = {
     color: "#4a5568",
   },
   tr: { borderBottom: "1px solid #edf2f7" },
-  td: { padding: "12px", color: "#2d3748" },
+  td: { padding: "16px 12px", color: "#2d3748", verticalAlign: "middle" },
   deleteBtn: {
     background: "#fed7d7",
     color: "#c53030",
@@ -264,6 +356,20 @@ const styles = {
   },
   loading: { textAlign: "center", color: "#718096" },
   empty: { textAlign: "center", color: "#718096", fontStyle: "italic" },
+  // New styles for load bar
+  loadBarBg: {
+    height: "6px",
+    background: "#edf2f7",
+    borderRadius: "3px",
+    marginTop: "6px",
+    width: "100px",
+    overflow: "hidden",
+  },
+  loadBarFill: {
+    height: "100%",
+    transition: "width 0.3s ease",
+    borderRadius: "3px",
+  },
 };
 
 export default TruckManagement;

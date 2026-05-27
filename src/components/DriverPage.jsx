@@ -34,6 +34,23 @@ const depotIcon = L.icon({
   shadowSize: [41, 41],
 });
 
+const dumpIcon = L.divIcon({
+  className: "",
+  html: `<div style="position: relative; width: 25px; height: 41px;">
+    <img 
+      src="${markerIcon}" 
+      style="
+        width: 25px; 
+        height: 41px; 
+        filter: invert(0) sepia(100%) saturate(300%) hue-rotate(90deg) brightness(0.8);
+      "
+    />
+  </div>`,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
+
 function MapController({ currentStop, bins, depotCoordinates }) {
   const map = useMap();
   useEffect(() => {
@@ -62,6 +79,7 @@ const DriverPage = () => {
   const [route, setRoute] = useState(null);
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
   const [bins, setBins] = useState([]);
+  const [allOtherBins, setAllOtherBins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const notificationRef = useRef(null);
@@ -79,12 +97,13 @@ const DriverPage = () => {
   ]);
   const [depotName, setDepotName] = useState("Bellevue Facility");
   const [roadPath, setRoadPath] = useState(null);
-
-  // Skip/Unable to Access States
   const [showSkipModal, setShowSkipModal] = useState(false);
   const [skipReason, setSkipReason] = useState("");
 
-  // Close dropdown on outside click
+  // Truck Constants
+  const MAX_TRUCK_CAPACITY = 30; // yards
+  const DUMP_THRESHOLD = 25.5; // 85% of 30
+
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -98,7 +117,6 @@ const DriverPage = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Initial Load & Polling
   useEffect(() => {
     fetchCurrentRoute();
     fetchNotifications();
@@ -121,14 +139,13 @@ const DriverPage = () => {
     return () => clearInterval(notifInterval);
   }, []);
 
-  // ✅ Calculate Distance (Haversine) if backend doesn't provide it
   const calculateDistance = (path) => {
     if (!path || path.length < 2) return 0;
     let total = 0;
     for (let i = 0; i < path.length - 1; i++) {
       const [lat1, lon1] = path[i];
       const [lat2, lon2] = path[i + 1];
-      const R = 3959; // Earth radius in miles
+      const R = 3959;
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
       const dLon = ((lon2 - lon1) * Math.PI) / 180;
       const a =
@@ -141,7 +158,6 @@ const DriverPage = () => {
     return total;
   };
 
-  // ✅ FETCH: Personal + DRIVER_ALERT system alerts only
   const fetchNotifications = async () => {
     try {
       const auth = JSON.parse(localStorage.getItem("auth"));
@@ -161,7 +177,6 @@ const DriverPage = () => {
     }
   };
 
-  // ✅ HARD DELETE: Removes from DB permanently
   const deleteNotification = async (notifId, e) => {
     if (e) e.stopPropagation();
     try {
@@ -173,7 +188,6 @@ const DriverPage = () => {
     }
   };
 
-  // ✅ MARK READ: Syncs both fields to backend
   const markAsRead = async (notifId) => {
     try {
       await axios.put(
@@ -190,7 +204,6 @@ const DriverPage = () => {
     }
   };
 
-  // ✅ MARK ALL READ: Syncs with backend
   const handleMarkAllAsRead = async () => {
     try {
       const unread = notifications.filter((n) => !n.read && !n.isRead);
@@ -209,35 +222,7 @@ const DriverPage = () => {
     }
   };
 
-  const getFacilityName = (lat, lon) => {
-    const facilities = {
-      "central-maintenance": [47.6101, -122.2015],
-      "south-renton": [47.4829, -122.2171],
-      "north-kirkland": [47.6815, -122.2087],
-      "east-issaquah": [47.5301, -122.0326],
-      "west-seattle": [47.5707, -122.3862],
-    };
-    let closest = "Central Maintenance Facility - Bellevue";
-    let minDist = Infinity;
-    for (const [name, coords] of Object.entries(facilities)) {
-      const dist = Math.sqrt((coords[0] - lat) ** 2 + (coords[1] - lon) ** 2);
-      if (dist < minDist) {
-        minDist = dist;
-        closest =
-          name === "central-maintenance"
-            ? "Central Maintenance Facility - Bellevue"
-            : name === "south-renton"
-              ? "South Depot - Renton"
-              : name === "north-kirkland"
-                ? "North Depot - Kirkland"
-                : name === "east-issaquah"
-                  ? "East Depot - Issaquah"
-                  : "West Depot - Seattle";
-      }
-    }
-    return closest;
-  };
-
+  const getFacilityName = () => "🏢 Starting Depot (Bellevue Facility)";
   const getBinColor = (fillLevel) => {
     if (fillLevel === 0) return "#a0aec0";
     if (fillLevel >= 90) return "#e53e3e";
@@ -245,14 +230,27 @@ const DriverPage = () => {
     return "#38a169";
   };
 
-  const fetchRoadPath = async (routeBins, startCoords) => {
+  const fetchRoadPath = async (routeBins, startCoords, routeSteps) => {
     try {
+      const binCoords = routeBins
+        .map((b) => {
+          const lat = b.location?.lat ?? b.latitude;
+          const lon = b.location?.lon ?? b.longitude;
+          return lat && lon ? `${lon},${lat}` : null;
+        })
+        .filter(Boolean);
+
+      const dumpCoords = (routeSteps || [])
+        .filter((s) => s.type === "DUMP")
+        .map((s) => `${s.lon},${s.lat}`);
+
+      if (binCoords.length === 0 && dumpCoords.length === 0) return;
+
       const coords = [
         `${startCoords[1]},${startCoords[0]}`,
-        ...routeBins.map(
-          (b) =>
-            `${b.longitude || b.location?.lon},${b.latitude || b.location?.lat}`,
-        ),
+        ...binCoords,
+        ...dumpCoords,
+        `${startCoords[1]},${startCoords[0]}`,
       ];
       const response = await axios.get(
         `https://router.project-osrm.org/route/v1/driving/${coords.join(";")}?overview=full&geometries=geojson`,
@@ -276,9 +274,15 @@ const DriverPage = () => {
         setLoading(false);
         return;
       }
-      const routeRes = await axios.get(
-        `http://localhost:8080/api/routes/driver/${driverId}`,
+
+      // Use search endpoint to find BOTH "CREATED" and "IN_PROGRESS" routes
+      const routeRes = await axios.post(
+        "http://localhost:8080/api/routes/search",
+        {
+          driverId: driverId,
+        },
       );
+
       const routesList = routeRes.data;
       if (!routesList?.length) {
         setError("No active route assigned. Contact administrator.");
@@ -286,27 +290,53 @@ const DriverPage = () => {
         return;
       }
 
-      const routeData = routesList[0];
+      const today = new Date().toISOString().split("T")[0];
+      const routeData =
+        routesList.find(
+          (r) =>
+            (r.status === "CREATED" || r.status === "IN_PROGRESS") &&
+            r.routeDate === today,
+        ) ||
+        routesList.find(
+          (r) => r.status === "CREATED" || r.status === "IN_PROGRESS",
+        );
+
+      if (!routeData) {
+        setError("No active route assigned. Contact administrator.");
+        setLoading(false);
+        return;
+      }
       setRoute(routeData);
+
+      const completedCount = routeData.completedBinIds?.length || 0;
+      setCurrentStopIndex(completedCount);
 
       let stationStep = routeData.steps?.find(
         (s) => s.type === "STATION" && s.action === "START",
       );
       if (stationStep) {
         setDepotCoordinates([stationStep.lat, stationStep.lon]);
-        setDepotName(getFacilityName(stationStep.lat, stationStep.lon));
+        setDepotName(getFacilityName());
       }
 
       const binsRes = await axios.get("http://localhost:8080/api/bins");
+      const allBins = binsRes.data;
       const routeBins = routeData.binIds
-        .map((id) => binsRes.data.find((b) => b.binId === id || b.id === id))
+        .map((id) => allBins.find((b) => b.binId === id || b.id === id))
         .filter(Boolean);
       setBins(routeBins);
+      setAllOtherBins(
+        allBins.filter(
+          (b) =>
+            !routeData.binIds.includes(b.binId) &&
+            !routeData.binIds.includes(b.id),
+        ),
+      );
 
       const startCoords = stationStep
         ? [stationStep.lat, stationStep.lon]
         : [47.6101, -122.2015];
-      fetchRoadPath(routeBins, startCoords);
+      fetchRoadPath(routeBins, startCoords, routeData.steps);
       setLoading(false);
     } catch (err) {
       console.error("Error fetching route:", err);
@@ -323,23 +353,80 @@ const DriverPage = () => {
     }
   };
 
+  // Calculate Cumulative Truck Load
+  const calculateTruckLoad = () => {
+    if (!route || !bins.length) return 0;
+    let currentLoad = route.startingTruckLoadYards || 0;
+
+    // Get bin steps from route plan
+    const binSteps = route.steps?.filter((s) => s.type === "BIN") || [];
+
+    // Sum up load for all collected bins (indices 0 to currentStopIndex - 1)
+    for (let i = 0; i < currentStopIndex; i++) {
+      if (i < binSteps.length) {
+        const step = binSteps[i];
+        const bin = bins[i]; // bins array is ordered by routeData.binIds
+        if (bin && bin.capacityYards && step.binFillLevel !== undefined) {
+          // Compaction ratio 4:1
+          const looseYards = bin.capacityYards * (step.binFillLevel / 100);
+          currentLoad += looseYards / 4.0;
+        }
+      }
+    }
+    return currentLoad;
+  };
+
+  const currentTruckLoad = calculateTruckLoad();
+  const truckLoadPercent = (currentTruckLoad / MAX_TRUCK_CAPACITY) * 100;
+  const isNearDumpThreshold = currentTruckLoad >= DUMP_THRESHOLD;
+
   const confirmPickup = async () => {
     try {
       const currentBin = bins[currentStopIndex];
       const binId = currentBin.binId || currentBin.id;
-      if (!binId) {
-        alert("Error: Bin ID is missing!");
-        return;
+      if (!binId || !route?.id)
+        return alert("Error: Missing Bin ID or Route ID!");
+
+      if (currentStopIndex === 0) {
+        // Mark route as IN_PROGRESS when driver confirms first bin
+        await axios.patch(
+          `http://localhost:8080/api/routes/${route.id}/status?status=IN_PROGRESS`,
+        );
       }
-      await axios.put(
-        `http://localhost:8080/api/routes/${route.id}/bins/${binId}/collect`,
+
+      // Updated endpoint to match RouteController.java
+      await axios.post(
+        `http://localhost:8080/api/routes/${route.id}/pickup/${binId}`,
       );
+
       const updated = [...bins];
       updated[currentStopIndex] = { ...currentBin, fillLevel: 0 };
       setBins(updated);
-      if (currentStopIndex < bins.length - 1)
-        setCurrentStopIndex(currentStopIndex + 1);
-      else setRouteCompleted(true);
+
+      //   if (currentStopIndex < bins.length - 1)
+      //     setCurrentStopIndex(currentStopIndex + 1);
+      //   else handleEndOfDay();
+      // } catch (err) {
+      //   console.error("Error confirming pickup:", err);
+      //   alert("Failed to confirm pickup");
+      // } finally {
+      //   setShowConfirmModal(false);
+      // }
+      let nextIndex = currentStopIndex + 1;
+      while (
+        nextIndex < bins.length &&
+        (updated[nextIndex]?.fillLevel ?? 0) === 0
+      ) {
+        nextIndex++;
+      }
+
+      if (nextIndex < bins.length) {
+        // There are still bins with trash — move to next non-empty one
+        setCurrentStopIndex(nextIndex);
+      } else {
+        // No more non-empty bins — all done, call end of day
+        handleEndOfDay();
+      }
     } catch (err) {
       console.error("Error confirming pickup:", err);
       alert("Failed to confirm pickup");
@@ -348,43 +435,70 @@ const DriverPage = () => {
     }
   };
 
-  // ✅ UNABLE TO ACCESS: Opens reason modal
   const handleUnableToAccess = () => {
     setSkipReason("");
     setShowSkipModal(true);
   };
 
-  // ✅ CONFIRM SKIP: Sends reason to backend & advances route
   const confirmSkip = async () => {
     try {
       const currentBin = bins[currentStopIndex];
       const binId = currentBin.binId || currentBin.id;
-      if (!binId || !route?.id) {
-        alert("Missing route or bin data.");
-        return;
-      }
+      if (!binId) return alert("Missing bin data.");
 
-      await axios.put(
-        `http://localhost:8080/api/routes/${route.id}/bins/${binId}/skip`,
-        {
-          reason: skipReason || "No reason provided",
-        },
-      );
+      await axios.post(`http://localhost:8080/api/routes/skip/${binId}`);
+
+      if (skipReason) {
+        await axios.post("http://localhost:8080/api/notifications", {
+          title: `Bin ${binId} Skipped`,
+          message: `Reason: ${skipReason}`,
+          driverId: "ADMIN",
+          type: "ALERT",
+          isRead: false,
+        });
+      }
 
       if (currentStopIndex < bins.length - 1)
         setCurrentStopIndex(currentStopIndex + 1);
-      else setRouteCompleted(true);
+      else handleEndOfDay();
 
       setShowSkipModal(false);
       setSkipReason("");
-      alert("Stop skipped successfully.");
+      alert("Stop skipped. Penalty applied for tomorrow.");
     } catch (err) {
       console.error("Error skipping bin:", err);
-      alert("Failed to skip stop. Check network/console.");
+      alert("Failed to skip stop.");
     }
   };
 
-  // ✅ REPORT: Routes EXCLUSIVELY to Admin
+  const handleEndOfDay = async () => {
+    try {
+      const auth = JSON.parse(localStorage.getItem("auth"));
+      const pickedUpBins = bins.filter((b) => b.fillLevel === 0);
+      const skippedBins = bins.filter((b) => b.fillLevel > 0);
+      const payload = {
+        completedRoutes: [
+          {
+            truckId: route.truckId,
+            driverId: auth?.employeeId,
+            endingTruckVolumeYards: 0.0,
+          },
+        ],
+        skippedBinIds: skippedBins.map((b) => b.binId || b.id),
+      };
+      await axios.post("http://localhost:8080/api/routes/end-of-day", payload);
+
+      await axios.patch(
+        `http://localhost:8080/api/routes/${route.id}/status?status=COMPLETED`,
+      );
+
+      setRouteCompleted(true);
+    } catch (err) {
+      console.error("End of day failed:", err);
+      alert("Failed to close shift. Please contact admin.");
+    }
+  };
+
   const submitReport = async () => {
     if (!issueText.trim()) return;
     try {
@@ -410,10 +524,12 @@ const DriverPage = () => {
   const handleBack = () => {
     if (currentStopIndex > 0) setCurrentStopIndex(currentStopIndex - 1);
   };
+
   const handleNext = () => {
     if (currentStopIndex < bins.length - 1)
       setCurrentStopIndex(currentStopIndex + 1);
   };
+
   const getBinCoords = (bin) =>
     bin.latitude && bin.longitude
       ? [bin.latitude, bin.longitude]
@@ -541,6 +657,7 @@ const DriverPage = () => {
   const straightLinePath = [
     depotCoordinates,
     ...bins.map(getBinCoords).filter(Boolean),
+    depotCoordinates,
   ];
 
   return (
@@ -603,7 +720,6 @@ const DriverPage = () => {
             →
           </div>
         </div>
-        {/* ✅ Improved Route Title */}
         <div style={{ textAlign: "center", flex: 1 }}>
           <div
             style={{ fontSize: "20px", fontWeight: "600", color: "#1a202c" }}
@@ -848,26 +964,87 @@ const DriverPage = () => {
             bins={bins}
             depotCoordinates={depotCoordinates}
           />
-          {bins.map((bin, i) => (
-            <CircleMarker
-              key={bin.id}
-              center={[bin.latitude, bin.longitude]}
-              radius={i === currentStopIndex ? 10 : 8}
-              fillColor={getBinColor(bin.fillLevel)}
-              color="#fff"
-              weight={2}
-              opacity={1}
-              fillOpacity={0.85}
-            >
-              <Popup>
-                <strong>{bin.binId}</strong>
-                <br />
-                {bin.locationName}
-                <br />
-                Fill: {bin.fillLevel}%
-              </Popup>
-            </CircleMarker>
-          ))}
+          {/* Non-route bins — context only, not part of today's stops */}
+          {allOtherBins.map((bin) => {
+            const lat = bin.location?.lat ?? bin.latitude;
+            const lon = bin.location?.lon ?? bin.longitude;
+            if (!lat || !lon) return null;
+            return (
+              <CircleMarker
+                key={`other-${bin.binId}`}
+                center={[lat, lon]}
+                radius={8}
+                pathOptions={{
+                  fillColor: "#718096",
+                  color: "#fff",
+                  weight: 2,
+                  opacity: 1,
+                  fillOpacity: 0.85,
+                }}
+              >
+                <Popup>
+                  <strong>{bin.binId}</strong>
+                  <br />
+                  {bin.locationName}
+                  <br />
+                  Fill: {bin.fillLevel ?? 0}%<br />
+                  <span style={{ color: "#718096", fontSize: "11px" }}>
+                    ⚪ Not on today's route
+                  </span>
+                </Popup>
+              </CircleMarker>
+            );
+          })}
+          {bins.map((bin, i) => {
+            const lat = bin.location?.lat ?? bin.latitude;
+            const lon = bin.location?.lon ?? bin.longitude;
+            if (!lat || !lon) return null;
+            return (
+              <CircleMarker
+                key={`${bin.id || bin.binId}-${bin.fillLevel}`}
+                center={[lat, lon]}
+                radius={i === currentStopIndex ? 10 : 8}
+                fillColor={getBinColor(bin.fillLevel)}
+                color="#fff"
+                weight={2}
+                opacity={1}
+                fillOpacity={0.85}
+              >
+                <Popup>
+                  <strong>{bin.binId}</strong>
+                  <br />
+                  {bin.locationName}
+                  <br />
+                  Fill: {bin.fillLevel}%
+                  {(bin.daysOverdue ?? 0) > 0 && (
+                    <>
+                      <br />
+                      <span style={{ color: "#c53030" }}>
+                        ⏳ Overdue: {bin.daysOverdue} day(s) — included in route
+                      </span>
+                    </>
+                  )}
+                </Popup>
+              </CircleMarker>
+            );
+          })}
+          {/* Dump station markers from route steps */}
+          {(route?.steps || [])
+            .filter((s) => s.type === "DUMP")
+            .map((step, i) => (
+              <Marker
+                key={`dump-${i}`}
+                position={[step.lat, step.lon]}
+                icon={dumpIcon}
+              >
+                <Popup>
+                  <strong>🏭 {step.stationName || "Transfer Station"}</strong>
+                  <br />
+                  Truck load before dump:{" "}
+                  {step.currentTruckLoadYards?.toFixed(1)} yds³
+                </Popup>
+              </Marker>
+            ))}
           <Polyline
             positions={roadPath || straightLinePath}
             color="#3182ce"
@@ -916,6 +1093,20 @@ const DriverPage = () => {
             >
               {currentBin?.locationName}
             </div>
+            {/* Show Days Overdue if applicable */}
+            {currentBin.daysOverdue > 0 && (
+              <div
+                style={{
+                  fontSize: "14px",
+                  color: "#c53030",
+                  marginTop: "4px",
+                  fontWeight: "600",
+                }}
+              >
+                ⚠️ Overdue: {currentBin.daysOverdue} day
+                {currentBin.daysOverdue !== 1 ? "s" : ""} (Skipped previously)
+              </div>
+            )}
           </div>
           <div
             style={{
@@ -929,6 +1120,80 @@ const DriverPage = () => {
             {currentStopIndex + 1} of {bins.length}
           </div>
         </div>
+
+        {/* Truck Load Indicator */}
+        <div
+          style={{
+            background: "#f8fafc",
+            padding: "16px",
+            borderRadius: "8px",
+            marginBottom: "20px",
+            border: `1px solid ${isNearDumpThreshold ? "#fc8181" : "#e2e8f0"}`,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "8px",
+            }}
+          >
+            <span
+              style={{ fontSize: "14px", fontWeight: "600", color: "#2d3748" }}
+            >
+              🚛 Truck Load (Cumulative)
+            </span>
+            <span
+              style={{
+                fontSize: "14px",
+                fontWeight: "700",
+                color: isNearDumpThreshold ? "#c53030" : "#2d3748",
+              }}
+            >
+              {currentTruckLoad.toFixed(1)} / {MAX_TRUCK_CAPACITY} yds
+            </span>
+          </div>
+          <div
+            style={{
+              height: "10px",
+              background: "#edf2f7",
+              borderRadius: "5px",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${Math.min(truckLoadPercent, 100)}%`,
+                background: isNearDumpThreshold
+                  ? "#e53e3e"
+                  : truckLoadPercent > 70
+                    ? "#dd6b20"
+                    : "#38a169",
+                transition: "width 0.3s",
+              }}
+            ></div>
+          </div>
+          <div
+            style={{
+              fontSize: "12px",
+              color: "#718096",
+              marginTop: "6px",
+              display: "flex",
+              justifyContent: "space-between",
+            }}
+          >
+            <span>Max Capacity: 30 yds</span>
+            {isNearDumpThreshold ? (
+              <span style={{ color: "#c53030", fontWeight: "600" }}>
+                ⚠️ Near Dump Threshold (85%)
+              </span>
+            ) : (
+              <span>Next Dump at 25.5 yds (85%)</span>
+            )}
+          </div>
+        </div>
+
         <div
           style={{
             display: "grid",

@@ -36,6 +36,7 @@ ChartJS.register(
   Legend,
   Title,
 );
+
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -61,6 +62,7 @@ const getBinCoordinates = (bin) => {
 function MapController({ bins }) {
   const map = useMap();
   const previousBinCount = useRef(0);
+
   useEffect(() => {
     if (bins.length > previousBinCount.current && bins.length > 0) {
       const latestBin = bins[bins.length - 1];
@@ -69,12 +71,14 @@ function MapController({ bins }) {
     }
     previousBinCount.current = bins.length;
   }, [bins, map]);
+
   useEffect(() => {
     const handleDoubleClick = () => {
       const mapContainer = document.querySelector(".leaflet-container");
       if (mapContainer) {
         mapContainer.style.transition = "opacity 0.5s ease";
         mapContainer.style.opacity = "0.3";
+
         if (bins.length === 0) map.setView(WASHINGTON_CENTER, WASHINGTON_ZOOM);
         else if (bins.length === 1) {
           const coords = getBinCoordinates(bins[0]);
@@ -88,20 +92,29 @@ function MapController({ bins }) {
               padding: [50, 50],
             });
         }
+
         setTimeout(() => {
           mapContainer.style.opacity = "1";
         }, 100);
       }
     };
+
     map.on("dblclick", handleDoubleClick);
     return () => map.off("dblclick", handleDoubleClick);
   }, [bins, map]);
+
   return null;
 }
 
 const Dashboard = () => {
   const [bins, setBins] = useState([]);
   const [binsLoading, setBinsLoading] = useState(true);
+
+  // Real backend counts
+  const [activeRouteCount, setActiveRouteCount] = useState(0);
+  const [overdueCount, setOverdueCount] = useState(0);
+  const [flaggedCount, setFlaggedCount] = useState(0);
+
   const [kpis, setKpis] = useState([
     {
       title: "Total Waste Collected",
@@ -167,6 +180,7 @@ const Dashboard = () => {
       subtitle: "In kWh",
     },
   ]);
+
   const [barData, setBarData] = useState({
     labels: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
     datasets: [
@@ -181,6 +195,7 @@ const Dashboard = () => {
       },
     ],
   });
+
   const [lineData, setLineData] = useState({
     labels: ["9", "10", "11", "12", "13", "14", "15", "16", "17"],
     datasets: [
@@ -196,8 +211,10 @@ const Dashboard = () => {
       },
     ],
   });
+
   const [ticketLog, setTicketLog] = useState([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
+
   const barOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -211,6 +228,7 @@ const Dashboard = () => {
       x: { grid: { display: false }, ticks: { color: "#4a5568" } },
     },
   };
+
   const lineOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -224,6 +242,7 @@ const Dashboard = () => {
       x: { grid: { display: false }, ticks: { color: "#4a5568" } },
     },
   };
+
   const [columnWidths, setColumnWidths] = useState({
     id: 70,
     description: 280,
@@ -237,7 +256,6 @@ const Dashboard = () => {
   const [resizeStart, setResizeStart] = useState({ x: 0, width: 0 });
   const resizeRef = useRef(null);
 
-  // ✅ Added "actions" column
   const columns = [
     { key: "id", label: "ID" },
     { key: "description", label: "Description" },
@@ -248,40 +266,55 @@ const Dashboard = () => {
     { key: "actions", label: "" },
   ];
 
-  const calculateStatistics = (binsData) => {
+  // Get real counts from backend
+  const calculateStatistics = (
+    binsData,
+    overdue = 0,
+    flagged = 0,
+    activeRoutes = 0,
+  ) => {
     if (!binsData || binsData.length === 0) return;
+
     const totalBins = binsData.length;
     const totalWasteCollected = binsData.reduce(
       (acc, bin) => acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100,
       0,
     );
+
     const uncollectedWaste = binsData
       .filter((bin) => bin.fillLevel >= 70 && !bin.isFlagged)
       .reduce(
         (acc, bin) => acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100,
         0,
       );
+
     const avgFillLevel =
       totalBins > 0
         ? binsData.reduce((acc, bin) => acc + (bin.fillLevel || 0), 0) /
           totalBins
         : 0;
+
     const binsNeedingCollection = binsData.filter(
       (bin) => bin.fillLevel >= 70,
     ).length;
+
+    // Use real active route count instead of fake math
     const totalRoutes = Math.ceil(totalBins / 15);
-    const routesInUse = Math.ceil(binsNeedingCollection / 15);
     const routesOverview =
-      totalRoutes > 0 ? (routesInUse / totalRoutes) * 100 : 0;
+      totalRoutes > 0 ? (activeRoutes / totalRoutes) * 100 : 0;
+
     const carbonFootprint = (totalWasteCollected / 1000) * 0.5;
+
     const recyclingBins = binsData.filter(
       (bin) =>
         bin.locationName?.toLowerCase().includes("recycle") ||
         bin.locationName?.toLowerCase().includes("recycling"),
     ).length;
+
     const segregationRate =
       totalBins > 0 ? (recyclingBins / totalBins) * 100 : 33;
     const electricityGenerated = (totalWasteCollected / 100) * 0.5;
+
     setKpis([
       {
         title: "Total Waste Collected",
@@ -299,7 +332,10 @@ const Dashboard = () => {
         trend: uncollectedWaste > 300 ? "down" : "stable",
         color: "#e53e3e",
         progress: { actual: uncollectedWaste, total: 1000 },
-        subtitle: "Waste generated by the hour",
+        subtitle:
+          overdue > 0
+            ? `${overdue} overdue bins included`
+            : "Waste generated by the hour",
       },
       {
         title: "Average Fill Level",
@@ -317,7 +353,7 @@ const Dashboard = () => {
         trend: "up",
         color: "#38a169",
         progress: { actual: routesOverview, total: 100 },
-        subtitle: "Routes in Use / Total Routes",
+        subtitle: `${activeRoutes} active / ${totalRoutes} total routes`,
       },
       {
         title: "Carbon Footprint",
@@ -347,6 +383,7 @@ const Dashboard = () => {
         subtitle: "In kWh",
       },
     ]);
+
     calculateChartData(binsData);
   };
 
@@ -355,10 +392,12 @@ const Dashboard = () => {
       (acc, bin) => acc + ((bin.depthCm || 100) * (bin.fillLevel || 0)) / 100,
       0,
     );
+
     const monthlyRevenue = Array.from({ length: 12 }, (_, i) => {
       const variation = 0.7 + Math.sin(i * 0.5) * 0.3;
       return Math.round(totalWaste * 0.05 * variation * 10) / 10;
     });
+
     setBarData({
       labels: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
       datasets: [
@@ -373,11 +412,13 @@ const Dashboard = () => {
         },
       ],
     });
+
     const hourlyWaste = Array.from({ length: 9 }, (_, i) => {
       const hour = i + 9;
       const peakFactor = 1 - Math.pow((hour - 13) / 5, 2);
       return Math.round(totalWaste * 0.1 * peakFactor * 10) / 10;
     });
+
     setLineData({
       labels: ["9", "10", "11", "12", "13", "14", "15", "16", "17"],
       datasets: [
@@ -395,7 +436,6 @@ const Dashboard = () => {
     });
   };
 
-  // ✅ FETCH TICKETS: ONLY shows driver reports (driverId === "ADMIN")
   const fetchTickets = async () => {
     try {
       const response = await axios.get(
@@ -407,6 +447,7 @@ const Dashboard = () => {
         setTicketsLoading(false);
         return;
       }
+
       const tickets = notifications
         .filter((n) => n.driverId === "ADMIN")
         .map((notif) => ({
@@ -419,6 +460,7 @@ const Dashboard = () => {
             : "N/A",
           status: notif.status || "Under Review",
         }));
+
       setTicketLog(tickets);
       setTicketsLoading(false);
     } catch (err) {
@@ -450,7 +492,6 @@ const Dashboard = () => {
     }
   };
 
-  // ✅ HARD DELETE: Permanently removes from DB
   const handleDeleteTicket = async (ticketId) => {
     try {
       await axios.delete(`http://localhost:8080/api/notifications/${ticketId}`);
@@ -460,22 +501,50 @@ const Dashboard = () => {
     }
   };
 
+  // Fetch real data from multiple backend endpoints in parallel
   useEffect(() => {
-    const fetchBins = async () => {
+    const fetchDashboardData = async () => {
       try {
-        const response = await axios.get("http://localhost:8080/api/bins");
-        setBins(response.data);
+        const [binsRes, overdueRes, flaggedRes, activeRoutesRes] =
+          await Promise.all([
+            axios.get("http://localhost:8080/api/bins"),
+            axios.get("http://localhost:8080/api/bins/overdue"),
+            axios.get("http://localhost:8080/api/bins/flagged"),
+            axios.get("http://localhost:8080/api/routes/status/IN_PROGRESS"),
+          ]);
+
+        const binsData = binsRes.data || [];
+
+        const overdueBins = (overdueRes.data || []).filter(
+          (b) => b.fillLevel > 0 && (b.daysOverdue ?? 0) > 1,
+        );
+
+        const flaggedBins = flaggedRes.data || [];
+        const activeRoutes = activeRoutesRes.data || [];
+
+        setBins(binsData);
+        setOverdueCount(overdueBins.length);
+        setFlaggedCount(flaggedBins.length);
+        setActiveRouteCount(activeRoutes.length);
         setBinsLoading(false);
-        calculateStatistics(response.data);
+
+        // Pass real counts to statistics calculator
+        calculateStatistics(
+          binsData,
+          overdueBins.length,
+          flaggedBins.length,
+          activeRoutes.length,
+        );
       } catch (err) {
-        console.error("Error fetching bins:", err);
+        console.error("Error fetching dashboard data:", err);
         setBinsLoading(false);
       }
     };
-    fetchBins();
+
+    fetchDashboardData();
     fetchTickets();
     const interval = setInterval(() => {
-      fetchBins();
+      fetchDashboardData();
       fetchTickets();
     }, 30000);
     return () => clearInterval(interval);
@@ -489,22 +558,26 @@ const Dashboard = () => {
     if (fillLevel > 0) return "#38a169";
     return "#718096";
   };
+
   const handleResizeStart = (index, e) => {
     e.preventDefault();
     const colKey = columns[index].key;
     setResizeStart({ x: e.clientX, width: columnWidths[colKey] });
     setIsResizing(index);
   };
+
   const handleResizeMove = (e) => {
     if (isResizing === null) return;
     const dx = e.clientX - resizeStart.x;
     const newWidth = Math.max(50, resizeStart.width + dx);
     setColumnWidths({ ...columnWidths, [columns[isResizing].key]: newWidth });
   };
+
   const handleResizeEnd = () => {
     setIsResizing(null);
     document.body.style.cursor = "default";
   };
+
   useEffect(() => {
     if (isResizing !== null) {
       document.addEventListener("mousemove", handleResizeMove);
@@ -525,6 +598,7 @@ const Dashboard = () => {
   const underReviewTickets = ticketLog.filter(
     (t) => t.status === "Under Review",
   ).length;
+
   const getStatusBadgeStyle = (status) => {
     switch (status) {
       case "Resolved":
@@ -541,7 +615,56 @@ const Dashboard = () => {
       className="dashboard-page"
       style={{ backgroundColor: "white", minHeight: "100vh", padding: "20px" }}
     >
-      <style>{`.dashboard-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; } .kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 15px; margin-bottom: 20px; } .kpi-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; position: relative; } .kpi-title { font-size: 14px; color: #4a5568; margin-bottom: 8px; } .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; color: #1a202c; } .kpi-unit { font-size: 14px; color: #4a5568; margin-top: 4px; } .kpi-subtext { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.4; min-height: 30px; } .kpi-progress { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin-top: auto; position: relative; width: 100%; } .kpi-progress-bar { height: 100%; border-radius: 4px; position: relative; transition: width 0.3s ease; } .kpi-progress-value { position: absolute; right: 0; top: -22px; font-size: 12px; color: #4a5568; } .map-container { background: #2d3748; border-radius: 8px; height: 350px; margin-bottom: 20px; position: relative; overflow: hidden; } .map-legend { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; } .legend-item { background: rgba(255,255,255,0.9); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); } .legend-dot { width: 8px; height: 8px; border-radius: 50%; } .legend-gray { background: #718096; } .legend-green { background: #38a169; } .legend-orange { background: #dd6b20; } .legend-red { background: #e53e3e; } .map-scale { position: absolute; bottom: 20px; left: 20px; font-size: 12px; color: #cbd5e1; z-index: 1000; } .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; } .ticket-log { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); } .ticket-log-header { padding: 16px; border-bottom: 1px solid #edf2f7; font-weight: 600; font-size: 18px; color: #2d3748; } .ticket-log-table { width: 100%; border-collapse: collapse; overflow-y: auto; max-height: 400px; } .ticket-log-table th { padding: 12px 16px; text-align: left; font-weight: 600; color: #4a5568; font-size: 14px; border-bottom: 1px solid #edf2f7; position: relative; min-width: 50px; } .ticket-log-table th .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; cursor: col-resize; z-index: 10; } .ticket-log-table th:hover .resize-handle { background: #cbd5e0; } .ticket-log-table td { padding: 12px 16px; font-size: 13px; color: #2d3748; border-bottom: 1px solid #edf2f7; white-space: normal; word-break: break-word; } .ticket-log-table tr:last-child td { border-bottom: none; } .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; } .status-badge:hover { opacity: 0.8; } .status-under-review { background: #fed7d7; color: #e53e3e; } .status-in-progress { background: #bee3f8; color: #3182ce; } .status-resolved { background: #c6f6d5; color: #38a169; } .status-pending { background: #feebc8; color: #dd6b20; } .chart-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; } .chart-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 12px; } .chart-container { height: 200px; } .stats-footer { display: flex; justify-content: space-between; background: white; border-radius: 8px; padding: 16px; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); } .stat-box { text-align: center; flex: 1; } .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 4px; } .stat-value { font-size: 24px; font-weight: 700; color: #1a202c; } .stat-resolved { color: #38a169; } .stat-under-review { color: #e53e3e; } .leaflet-container { background: #2d3748; border-radius: 8px; } .status-dropdown { padding: 4px 8px; border-radius: 4px; border: 1px solid #cbd5e0; font-size: 12px; font-weight: 500; cursor: pointer; background: white; transition: all 0.2s; } .status-dropdown:hover { border-color: #38a169; } .status-dropdown option { padding: 8px; }`}</style>
+      <style>{`
+        .dashboard-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 15px; margin-bottom: 20px; }
+        .kpi-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; position: relative; }
+        .kpi-title { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
+        .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; color: #1a202c; }
+        .kpi-unit { font-size: 14px; color: #4a5568; margin-top: 4px; }
+        .kpi-subtext { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.4; min-height: 30px; }
+        .kpi-progress { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin-top: auto; position: relative; width: 100%; }
+        .kpi-progress-bar { height: 100%; border-radius: 4px; position: relative; transition: width 0.3s ease; }
+        .kpi-progress-value { position: absolute; right: 0; top: -22px; font-size: 12px; color: #4a5568; }
+        .map-container { background: #2d3748; border-radius: 8px; height: 350px; margin-bottom: 20px; position: relative; overflow: hidden; }
+        .map-legend { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
+        .legend-item { background: rgba(255,255,255,0.9); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .legend-gray { background: #718096; }
+        .legend-green { background: #38a169; }
+        .legend-orange { background: #dd6b20; }
+        .legend-red { background: #e53e3e; }
+        .map-scale { position: absolute; bottom: 20px; left: 20px; font-size: 12px; color: #cbd5e1; z-index: 1000; }
+        .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .ticket-log { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .ticket-log-header { padding: 16px; border-bottom: 1px solid #edf2f7; font-weight: 600; font-size: 18px; color: #2d3748; }
+        .ticket-log-table { width: 100%; border-collapse: collapse; overflow-y: auto; max-height: 400px; }
+        .ticket-log-table th { padding: 12px 16px; text-align: left; font-weight: 600; color: #4a5568; font-size: 14px; border-bottom: 1px solid #edf2f7; position: relative; min-width: 50px; }
+        .ticket-log-table th .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; cursor: col-resize; z-index: 10; }
+        .ticket-log-table th:hover .resize-handle { background: #cbd5e0; }
+        .ticket-log-table td { padding: 12px 16px; font-size: 13px; color: #2d3748; border-bottom: 1px solid #edf2f7; white-space: normal; word-break: break-word; }
+        .ticket-log-table tr:last-child td { border-bottom: none; }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
+        .status-badge:hover { opacity: 0.8; }
+        .status-under-review { background: #fed7d7; color: #e53e3e; }
+        .status-in-progress { background: #bee3f8; color: #3182ce; }
+        .status-resolved { background: #c6f6d5; color: #38a169; }
+        .status-pending { background: #feebc8; color: #dd6b20; }
+        .chart-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); height: 100%; }
+        .chart-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 12px; }
+        .chart-container { height: 200px; }
+        .stats-footer { display: flex; justify-content: space-between; background: white; border-radius: 8px; padding: 16px; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .stat-box { text-align: center; flex: 1; }
+        .stat-label { font-size: 14px; color: #4a5568; margin-bottom: 4px; }
+        .stat-value { font-size: 24px; font-weight: 700; color: #1a202c; }
+        .stat-resolved { color: #38a169; }
+        .stat-under-review { color: #e53e3e; }
+        .leaflet-container { background: #2d3748; border-radius: 8px; }
+        .status-dropdown { padding: 4px 8px; border-radius: 4px; border: 1px solid #cbd5e0; font-size: 12px; font-weight: 500; cursor: pointer; background: white; transition: all 0.2s; }
+        .status-dropdown:hover { border-color: #38a169; }
+        .status-dropdown option { padding: 8px; }
+      `}</style>
+
       <div className="kpi-grid">
         {kpis.map((kpi, i) => (
           <div key={i} className="kpi-card">
@@ -566,6 +689,76 @@ const Dashboard = () => {
           </div>
         ))}
       </div>
+
+      {/* Improved Overdue Warning Banner */}
+      {overdueCount > 0 && (
+        <div
+          style={{
+            background: "#FFF5F5",
+            border: "1px solid #FED7D7",
+            borderRadius: "12px",
+            padding: "16px 20px",
+            margin: "0 0 24px 0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            boxShadow: "0 4px 6px rgba(229, 62, 62, 0.05)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div
+              style={{
+                background: "#FED7D7",
+                borderRadius: "50%",
+                width: "32px",
+                height: "32px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "18px",
+              }}
+            >
+              ⚠️
+            </div>
+            <div>
+              <div
+                style={{
+                  color: "#C53030",
+                  fontWeight: "700",
+                  fontSize: "15px",
+                }}
+              >
+                {overdueCount} Bin{overdueCount !== 1 ? "s" : ""} Overdue
+              </div>
+              <div
+                style={{ color: "#9B2C2C", fontSize: "13px", marginTop: "2px" }}
+              >
+                These bins were skipped on previous days and need immediate
+                attention.
+              </div>
+            </div>
+          </div>
+
+          <a
+            href="/bins?filter=overdue"
+            style={{
+              background: "#C53030",
+              color: "white",
+              padding: "8px 16px",
+              borderRadius: "6px",
+              textDecoration: "none",
+              fontSize: "13px",
+              fontWeight: "600",
+              transition: "background 0.2s",
+            }}
+            onMouseEnter={(e) => (e.target.style.background = "#9B2C2C")}
+            onMouseLeave={(e) => (e.target.style.background = "#C53030")}
+          >
+            View Overdue Bins →
+          </a>
+        </div>
+      )}
+
       <div className="map-container">
         {binsLoading ? (
           <div
@@ -595,6 +788,7 @@ const Dashboard = () => {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             />
             <MapController bins={bins} />
+
             {bins.map((bin) => {
               const coords = getBinCoordinates(bin);
               if (!coords) return null;
@@ -629,6 +823,7 @@ const Dashboard = () => {
                 </CircleMarker>
               );
             })}
+
             {bins.length === 0 && (
               <Popup position={WASHINGTON_CENTER}>
                 <div style={{ textAlign: "center" }}>
@@ -649,6 +844,7 @@ const Dashboard = () => {
             )}
           </MapContainer>
         )}
+
         <div className="map-legend">
           <div className="legend-item">
             <div className="legend-dot legend-gray"></div>
@@ -667,14 +863,17 @@ const Dashboard = () => {
             <span>Critical (90%+)</span>
           </div>
         </div>
+
         <div className="map-scale">
           <div>4km</div>
           <div>2mi</div>
         </div>
       </div>
+
       <div className="content-grid">
         <div className="ticket-log">
           <div className="ticket-log-header">Ticket Log</div>
+
           {ticketsLoading ? (
             <div
               style={{ padding: "40px", textAlign: "center", color: "#718096" }}
@@ -728,7 +927,6 @@ const Dashboard = () => {
                         <option value="Resolved">Resolved</option>
                       </select>
                     </td>
-                    {/* ✅ DELETE BUTTON COLUMN */}
                     <td
                       style={{
                         width: columnWidths.actions,
@@ -767,6 +965,7 @@ const Dashboard = () => {
             </table>
           )}
         </div>
+
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           <div className="chart-card">
             <div className="chart-title">Reselling Revenue (in $)</div>
@@ -774,6 +973,7 @@ const Dashboard = () => {
               <Bar data={barData} options={barOptions} />
             </div>
           </div>
+
           <div className="chart-card">
             <div className="chart-title">Waste sequestered (by the hour)</div>
             <div className="chart-container">
@@ -782,6 +982,7 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
       <div className="stats-footer">
         <div className="stat-box">
           <div className="stat-label">Total Tickets</div>
@@ -801,4 +1002,5 @@ const Dashboard = () => {
     </div>
   );
 };
+
 export default Dashboard;

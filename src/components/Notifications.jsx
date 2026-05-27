@@ -9,7 +9,7 @@ const Notifications = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredId, setHoveredId] = useState(null);
 
-  // ✅ Helper for local dismissal
+  // Helper for local dismissal
   const getDismissedBellIds = () => {
     try {
       return JSON.parse(localStorage.getItem("dismissed_admin_bell") || "[]");
@@ -24,7 +24,7 @@ const Notifications = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // ✅ FETCH: System alerts + Driver reports. Excludes locally dismissed.
+  // FETCH: System alerts + Driver reports. Excludes locally dismissed.
   const fetchNotifications = async () => {
     try {
       const response = await axios.get(
@@ -32,7 +32,7 @@ const Notifications = () => {
       );
       const data = response.data;
 
-      // ✅ Admin bell ONLY shows driver reports. Ignores system/driver alerts.
+      // Admin bell ONLY shows driver reports. Ignores system/driver alerts.
       const adminNotifications = data.filter((n) => n.driverId === "ADMIN");
 
       setNotifications(adminNotifications);
@@ -60,7 +60,7 @@ const Notifications = () => {
     }
   };
 
-  // ✅ SOFT DELETE: Hides from bell only. Stays in DB for Ticket Log.
+  // SOFT DELETE: Hides from bell only. Stays in DB for Ticket Log.
   const deleteNotification = async (id) => {
     const dismissed = getDismissedBellIds();
     if (!dismissed.includes(id)) {

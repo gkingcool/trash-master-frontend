@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const API_BASE_URL = "http://localhost:8080/api/employees";
 const TRUCKS_API_URL = "http://localhost:8080/api/trucks";
@@ -53,6 +55,10 @@ const AdminDriverPage = () => {
       const routesResponse = await axios.get(ROUTES_API_URL);
       const allRoutes = routesResponse.data;
 
+      // 4. Fetch All Bins
+      const binsResponse = await axios.get("http://localhost:8080/api/bins");
+      const allBins = binsResponse.data;
+
       // 4. Merge Data
       const driverData = driverEmployees.map((emp) => {
         const activeRoute = allRoutes.find(
@@ -65,8 +71,51 @@ const AdminDriverPage = () => {
           (t) => t.assignedDriverId === emp.employeeId,
         );
 
-        const completedStops = activeRoute?.completedBinIds?.length || 0;
-        const totalStops = activeRoute?.totalStops || 0;
+        // 1. Calculate TOTAL Stops (Bins + Dump Trips)
+        // Use the route 'steps' because it includes the planned dump trips!
+        let totalStops = 0;
+        if (activeRoute && activeRoute.steps) {
+          const binStops = activeRoute.steps.filter(
+            (s) => s.type === "BIN",
+          ).length;
+          const dumpStops = activeRoute.steps.filter(
+            (s) => s.type === "DUMP" && s.action === "EMPTY_TRUCK",
+          ).length;
+          totalStops = binStops + dumpStops;
+        } else if (activeRoute && activeRoute.binIds) {
+          totalStops = activeRoute.binIds.length;
+        }
+
+        // ✅ 2. Calculate COMPLETED Stops
+        // The backend doesn't save 'completedBinIds' to the Route,
+        // Check the actual 'allBins' array to see which ones have fillLevel === 0.
+        let completedStops = 0;
+        if (activeRoute && activeRoute.binIds) {
+          completedStops = activeRoute.binIds.filter((binId) => {
+            const bin = allBins.find(
+              (b) => b.binId === binId || b.id === binId,
+            );
+            return bin && bin.fillLevel === 0;
+          }).length;
+        }
+        // const completedStops = activeRoute?.completedBinIds?.length || 0;
+        // const totalStops = activeRoute?.totalStops || 0;
+        // const completedStops = activeRoute?.completedBinIds?.length || 0;
+
+        // const binStopsWithTrash = activeRoute?.steps
+        //   ? activeRoute.steps.filter(
+        //       (s) => s.type === "BIN" && s.binFillLevel > 0,
+        //     ).length
+        //   : 0;
+
+        // const midRouteDumps = activeRoute?.steps
+        //   ? activeRoute.steps.filter(
+        //       (s) => s.type === "DUMP" && s.action === "EMPTY_TRUCK",
+        //     ).length
+        //   : 0;
+
+        // const totalStops = binStopsWithTrash + midRouteDumps;
+
         const efficiency =
           totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
 
@@ -101,6 +150,11 @@ const AdminDriverPage = () => {
 
       setDrivers(driverData);
       setLoading(false);
+      console.log(
+        "Active route completedBinIds:",
+        allRoutes.find((r) => r.driverId === "EMP-1775605883523")
+          ?.completedBinIds,
+      );
     } catch (err) {
       console.error("Error fetching data:", err);
       setError(
@@ -219,62 +273,236 @@ const AdminDriverPage = () => {
     alert(`✅ Exported ${activeDrivers.length} active drivers successfully!`);
   };
 
-  // PDF Export (Note: Requires jspdf library - see instructions below)
   const handleExportPDF = () => {
-    alert(
-      "📄 PDF Export: To enable PDF export, install the jspdf library:\n\nnpm install jspdf\n\nThen implement the generatePDF function.",
-    );
+    generatePDF();
     setShowExportModal(false);
   };
 
-  const generatePDF = async () => {
-    const { jsPDF } = window.jspdf;
+  const generatePDF = () => {
     const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
 
-    // Add title
-    doc.setFontSize(20);
-    doc.text("Driver Performance Report", 14, 20);
+    // 1. Header Section (Green Bar)
+    doc.setFillColor(56, 161, 105);
+    doc.rect(0, 0, pageWidth, 40, "F");
 
-    // Add date
-    doc.setFontSize(11);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text("Driver Management Report", 14, 25);
 
-    // Add table headers
-    const headers = [
-      ["ID", "Name", "Status", "Vehicle", "Stops", "Efficiency"],
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      `Generated on: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`,
+      14,
+      35,
+    );
+
+    // 2. Summary Statistics
+    doc.setTextColor(45, 55, 72);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Summary Statistics", 14, 55);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+
+    const totalDrivers = drivers.length;
+    const activeDrivers = drivers.filter((d) => d.status === "active").length;
+    const avgEfficiency =
+      drivers.length > 0
+        ? Math.round(
+            drivers.reduce((acc, d) => acc + (parseInt(d.efficiency) || 0), 0) /
+              drivers.length,
+          )
+        : 0;
+    const totalCollection = drivers
+      .reduce((acc, d) => acc + (parseFloat(d.todayCollection) || 0), 0)
+      .toFixed(1);
+
+    // --- FIX: Explicitly set colors before EVERY rect and text ---
+
+    // Stat 1: Total Drivers
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(247, 250, 252); // Light gray fill
+    doc.rect(14, 60, 40, 15, "FD");
+
+    doc.setTextColor(45, 55, 72); // Dark text
+    doc.setFont("helvetica", "normal");
+    doc.text("Total Drivers", 16, 67);
+    doc.setFont("helvetica", "bold");
+    doc.text(totalDrivers.toString(), 16, 72);
+
+    // Stat 2: Active Drivers
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(247, 250, 252); // Reset fill to light gray
+    doc.rect(60, 60, 40, 15, "FD");
+
+    doc.setTextColor(45, 55, 72); // Reset text to dark
+    doc.setFont("helvetica", "normal");
+    doc.text("Active Drivers", 62, 67);
+    doc.setFont("helvetica", "bold");
+    doc.text(activeDrivers.toString(), 62, 72);
+
+    // Stat 3: Avg Efficiency
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(247, 250, 252); // Reset fill to light gray
+    doc.rect(106, 60, 40, 15, "FD");
+
+    doc.setTextColor(45, 55, 72); // Reset text to dark
+    doc.setFont("helvetica", "normal");
+    doc.text("Avg Efficiency", 108, 67);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${avgEfficiency}%`, 108, 72);
+
+    // Stat 4: Total Collection
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(247, 250, 252); // Reset fill to light gray
+    doc.rect(152, 60, 40, 15, "FD");
+
+    doc.setTextColor(45, 55, 72); // Reset text to dark
+    doc.setFont("helvetica", "normal");
+    doc.text("Total Collection", 154, 67);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${totalCollection} tons`, 154, 72);
+
+    // 3. Driver Table
+    const tableColumn = [
+      "ID",
+      "Name",
+      "Status",
+      "Vehicle",
+      "Stops",
+      "Efficiency",
+      "Collection (tons)",
     ];
-    const data = drivers.map((d) => [
-      d.id,
-      d.name,
-      d.status,
-      d.vehicle,
-      `${d.completedStops}/${d.totalStops}`,
-      d.efficiency,
+    const tableRows = drivers.map((driver) => [
+      driver.id,
+      driver.name,
+      driver.status.toUpperCase(),
+      driver.vehicle,
+      `${driver.completedStops}/${driver.totalStops}`,
+      driver.efficiency,
+      driver.todayCollection,
     ]);
 
-    // Create table
-    doc.autoTable({
-      head: headers,
-      body: data,
-      startY: 40,
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 85,
+      theme: "grid",
+      headStyles: {
+        fillColor: [56, 161, 105],
+        textColor: 255,
+        fontStyle: "bold",
+      },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      styles: { fontSize: 9, cellPadding: 3, textColor: [45, 55, 72] },
     });
 
-    // Save PDF
+    // 4. Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(160, 174, 192);
+      doc.text(
+        `Page ${i} of ${pageCount} - Smart Waste Management System`,
+        pageWidth / 2,
+        290,
+        { align: "center" },
+      );
+    }
+
     doc.save(`driver-report-${new Date().toISOString().split("T")[0]}.pdf`);
   };
 
-  // Handle truck assignment
+  //   const { jsPDF } = window.jspdf;
+  //   const doc = new jsPDF();
+
+  //   // Add title
+  //   doc.setFontSize(20);
+  //   doc.text("Driver Performance Report", 14, 20);
+
+  //   // Add date
+  //   doc.setFontSize(11);
+  //   doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+
+  //   // Add table headers
+  //   const headers = [
+  //     ["ID", "Name", "Status", "Vehicle", "Stops", "Efficiency"],
+  //   ];
+  //   const data = drivers.map((d) => [
+  //     d.id,
+  //     d.name,
+  //     d.status,
+  //     d.vehicle,
+  //     `${d.completedStops}/${d.totalStops}`,
+  //     d.efficiency,
+  //   ]);
+
+  //   // Create table
+  //   doc.autoTable({
+  //     head: headers,
+  //     body: data,
+  //     startY: 40,
+  //   });
+
+  //   // Save PDF
+  //   doc.save(`driver-report-${new Date().toISOString().split("T")[0]}.pdf`);
+  // };
+
   const handleAssignTruck = async () => {
     if (!selectedDriver || !selectedTruckId) return;
     try {
+      // Find ALL trucks assigned to this driver (not just the first one)
+      const existingTrucks = trucks.filter(
+        (t) =>
+          t.assignedDriverId === selectedDriver.id &&
+          t.truckId !== selectedTruckId,
+      );
+
+      // Unassign ALL of them
+      for (const truck of existingTrucks) {
+        await axios.put(`${TRUCKS_API_URL}/${truck.truckId}`, {
+          assignedDriverId: "", // empty string instead of null
+          currentCompactedYards: truck.currentCompactedYards,
+        });
+        console.log(
+          `🔓 Unassigned ${truck.truckId} from ${selectedDriver.name}`,
+        );
+      }
+
+      // Step 3: Assign the NEW truck to the driver
       await axios.put(`${TRUCKS_API_URL}/${selectedTruckId}`, {
         assignedDriverId: selectedDriver.id,
         currentCompactedYards: 0.0,
       });
 
+      setTrucks((prev) =>
+        prev.map((t) => {
+          if (t.truckId === selectedTruckId)
+            return { ...t, assignedDriverId: selectedDriver.id };
+          if (existingTrucks.find((et) => et.truckId === t.truckId))
+            return { ...t, assignedDriverId: "" };
+          return t;
+        }),
+      );
+
+      setDrivers((prev) =>
+        prev.map((d) =>
+          d.employeeId === selectedDriver.employeeId
+            ? { ...d, vehicle: selectedTruckId }
+            : d,
+        ),
+      );
+
       alert(`✅ Truck ${selectedTruckId} assigned to ${selectedDriver.name}`);
       setShowAssignTruckModal(false);
       setSelectedTruckId("");
+      setSelectedDriver(null);
+
       fetchAllData();
     } catch (err) {
       console.error("Error assigning truck:", err);
@@ -325,6 +553,12 @@ const AdminDriverPage = () => {
 
   const openAssignTruckModal = (driver) => {
     setSelectedDriver(driver);
+
+    console.log("Driver id:", driver.id);
+    console.log(
+      "Trucks assignedDriverIds:",
+      trucks.map((t) => ({ truck: t.truckId, assignedTo: t.assignedDriverId })),
+    );
     const currentTruck = trucks.find((t) => t.assignedDriverId === driver.id);
     setSelectedTruckId(currentTruck ? currentTruck.truckId : "");
     setShowAssignTruckModal(true);
@@ -1127,7 +1361,7 @@ const AdminDriverPage = () => {
                   View Live Route
                 </button>
 
-                {/* ✅ NEW: Assign Truck Button */}
+                {/* Assign Truck Button */}
                 <button
                   className="action-btn"
                   style={{ background: "#805ad5", color: "white" }}
@@ -1148,7 +1382,7 @@ const AdminDriverPage = () => {
         )}
       </div>
 
-      {/* ✅ Assign Truck Modal */}
+      {/* Assign Truck Modal */}
       {showAssignTruckModal && (
         <div className="message-modal-overlay">
           <div
@@ -1182,13 +1416,21 @@ const AdminDriverPage = () => {
                 }}
               >
                 <option value="">-- Select a Truck --</option>
-                {trucks.map((truck) => (
+                {/* {trucks.map((truck) => (
                   <option key={truck.truckId} value={truck.truckId}>
                     {truck.truckId}
                     {truck.assignedDriverId &&
                     truck.assignedDriverId !== selectedDriver.id
                       ? ` (Currently: ${truck.assignedDriverId})`
                       : " (Available)"}
+                  </option>
+                ))} */}
+                {trucks.map((truck) => (
+                  <option key={truck.truckId} value={truck.truckId}>
+                    {truck.truckId}
+                    {!truck.assignedDriverId || truck.assignedDriverId === ""
+                      ? " (Available)"
+                      : ` (Assigned to: ${truck.assignedDriverId})`}
                   </option>
                 ))}
               </select>
@@ -1325,14 +1567,12 @@ const AdminDriverPage = () => {
 
               <div
                 className="export-option"
-                onClick={handleExportPDF}
-                style={{ opacity: 0.6 }}
+                onClick={handleExportPDF} // Trigger PDF Generation
+                style={{ cursor: "pointer" }} // Ensure cursor looks clickable
               >
                 <div className="export-option-icon">📄</div>
                 <div>
-                  <div className="export-option-title">
-                    PDF Report (Coming Soon)
-                  </div>
+                  <div className="export-option-title">PDF Report</div>
                   <div className="export-option-desc">
                     Professional PDF report with charts and summaries
                   </div>

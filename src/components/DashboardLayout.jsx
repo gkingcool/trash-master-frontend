@@ -38,10 +38,10 @@ const getCurrentUser = () => {
 
 export default function DashboardLayout() {
   const location = useLocation();
-  // ✅ Get current user
+  // Get current user
   const user = getCurrentUser();
 
-  // ✅ FIXED: Redirect to login page
+  // Redirect to login page
   const handleLogout = () => {
     localStorage.removeItem("auth");
     window.location.href = "/login";
@@ -117,7 +117,7 @@ export default function DashboardLayout() {
               </Link>
             </li>
 
-            {/* ✅ NEW: Fleet/Trucks Link */}
+            {/* Fleet/Trucks Link */}
             <li>
               <Link
                 to="/trucks"
@@ -176,15 +176,6 @@ export default function DashboardLayout() {
             </li>
             <li>
               <Link
-                to="/deployments"
-                className={`nav-link ${isActive("/deployments") ? "active" : ""}`}
-              >
-                <img src={deploymentsIcon} alt="Deployments" />
-                <span>Deployments</span>
-              </Link>
-            </li>
-            <li>
-              <Link
                 to="/settings"
                 className={`nav-link ${isActive("/settings") ? "active" : ""}`}
               >
@@ -202,7 +193,7 @@ export default function DashboardLayout() {
           <div className="header-actions">
             <Notifications />
 
-            {/* ✅ Dynamic User Avatar with Initials */}
+            {/* Dynamic User Avatar with Initials */}
             <div className="user-avatar-container">
               <button
                 className="user-avatar"

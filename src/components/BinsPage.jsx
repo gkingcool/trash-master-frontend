@@ -1,25 +1,29 @@
 // src/components/BinsPage.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 
 const API_BASE_URL = "http://localhost:8080/api/bins";
+const SENSOR_API_URL = "http://localhost:8080/api/sensors/getAll";
 
 const BinsPage = () => {
   const [bins, setBins] = useState([]);
+  const [sensors, setSensors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const [selectedBin, setSelectedBin] = useState(null);
-  const [filterStatus, setFilterStatus] = useState("all");
+  const [showSensorQueryModal, setShowSensorQueryModal] = useState(false);
+  const [sensorQueryBin, setSensorQueryBin] = useState(null);
+  const [sensorData, setSensorData] = useState(null);
+  const [sensorQueryLoading, setSensorQueryLoading] = useState(false);
+  const [activeFilter, setActiveFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
-
   const [addressInput, setAddressInput] = useState("");
   const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isGeocoding, setIsGeocoding] = useState(false);
-
   const [formData, setFormData] = useState({
     binId: "",
     locationName: "",
@@ -39,21 +43,20 @@ const BinsPage = () => {
     return null;
   };
 
-  useEffect(() => {
-    fetchBins();
-    const interval = setInterval(fetchBins, 15000);
-    const handleSensorAssigned = () => fetchBins();
-    window.addEventListener("sensorAssigned", handleSensorAssigned);
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("sensorAssigned", handleSensorAssigned);
-    };
-  }, []);
-
-  const fetchBins = async () => {
+  const fetchBins = useCallback(async () => {
     try {
-      const response = await axios.get(API_BASE_URL);
+      let url = API_BASE_URL;
+      if (activeFilter === "flagged") url = `${API_BASE_URL}/flagged`;
+      else if (activeFilter === "critical")
+        url = `${API_BASE_URL}/full?threshold=90`;
+      else if (activeFilter === "full")
+        url = `${API_BASE_URL}/full?threshold=70`;
+      else if (activeFilter === "overdue") url = `${API_BASE_URL}/overdue`;
+      else if (activeFilter === "commercial")
+        url = `${API_BASE_URL}/zone/COMMERCIAL`;
+      else if (activeFilter === "public") url = `${API_BASE_URL}/zone/PUBLIC`;
+
+      const response = await axios.get(url);
       setBins(response.data);
       setLoading(false);
     } catch (err) {
@@ -63,7 +66,31 @@ const BinsPage = () => {
       );
       setLoading(false);
     }
-  };
+  }, [activeFilter]);
+
+  const fetchSensors = useCallback(async () => {
+    try {
+      const res = await axios.get(SENSOR_API_URL);
+      setSensors(res.data);
+    } catch (err) {
+      console.warn("Failed to fetch sensors for battery sync:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBins();
+    fetchSensors();
+    const interval = setInterval(fetchBins, 15000);
+    const handleSensorAssigned = () => {
+      fetchBins();
+      fetchSensors();
+    };
+    window.addEventListener("sensorAssigned", handleSensorAssigned);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("sensorAssigned", handleSensorAssigned);
+    };
+  }, [fetchBins, fetchSensors]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -176,6 +203,7 @@ const BinsPage = () => {
         capacityYards: formData.capacityYards
           ? parseInt(formData.capacityYards)
           : 6,
+        daysOverdue: 0,
       });
       setShowEditModal(false);
       setSelectedBin(null);
@@ -199,7 +227,6 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ FLAG BIN + SEND ALERT TO DRIVERS
   const handleFlagBin = async (binId, issue) => {
     try {
       await axios.put(`${API_BASE_URL}/${binId}/flag`, {
@@ -215,7 +242,10 @@ const BinsPage = () => {
           isRead: false,
         });
       } catch (notifErr) {
-        console.warn("Bin flagged, but failed to send notification:", notifErr);
+        console.warn(
+          "Bin flagged, but failed to send notification: ",
+          notifErr,
+        );
       }
       fetchBins();
     } catch (err) {
@@ -223,7 +253,6 @@ const BinsPage = () => {
     }
   };
 
-  // ✅ UNFLAG BIN + SEND RESOLUTION ALERT TO DRIVERS
   const handleUnflagBin = async (binId) => {
     try {
       await axios.put(`${API_BASE_URL}/${binId}/flag`, {
@@ -240,7 +269,7 @@ const BinsPage = () => {
         });
       } catch (notifErr) {
         console.warn(
-          "Bin unflagged, but failed to send notification:",
+          "Bin unflagged, but failed to send notification: ",
           notifErr,
         );
       }
@@ -267,6 +296,57 @@ const BinsPage = () => {
     setShowEditModal(true);
   };
 
+  // ─── REAL SENSOR QUERY LOGIC ───────────────────────────────────────
+  const openSensorQueryModal = (bin) => {
+    setSensorQueryBin(bin);
+    const sensor = sensors.find((s) => s.sensorId === bin.sensorId);
+    const fill = bin.fillLevel || 0;
+    const depth = bin.depthCm || 100;
+    // Derive real distance from backend fill calculation: fill = ((depth - dist) / depth) * 100
+    const realDistance = Math.max(0, depth * (1 - fill / 100));
+
+    setSensorData({
+      battery: sensor?.batteryLevel ?? null,
+      status: sensor?.status ?? "UNKNOWN",
+      lastUpdated: sensor?.lastUpdated ?? null,
+      distance: realDistance.toFixed(1),
+      fillLevel: fill.toFixed(1),
+      isOnline: sensor?.status === "ACTIVE" || sensor?.status === "LOW_BATTERY",
+    });
+    setShowSensorQueryModal(true);
+  };
+
+  const handleRefreshSensorData = async () => {
+    setSensorQueryLoading(true);
+    try {
+      await Promise.all([fetchBins(), fetchSensors()]);
+      // Re-evaluate with fresh data
+      const updatedBin =
+        bins.find((b) => b.binId === sensorQueryBin.binId) || sensorQueryBin;
+      const updatedSensor = sensors.find(
+        (s) => s.sensorId === updatedBin.sensorId,
+      );
+      const fill = updatedBin.fillLevel || 0;
+      const depth = updatedBin.depthCm || 100;
+      const realDistance = Math.max(0, depth * (1 - fill / 100));
+
+      setSensorQueryBin(updatedBin);
+      setSensorData({
+        battery: updatedSensor?.batteryLevel ?? null,
+        status: updatedSensor?.status ?? "UNKNOWN",
+        lastUpdated: updatedSensor?.lastUpdated ?? null,
+        distance: realDistance.toFixed(1),
+        fillLevel: fill.toFixed(1),
+        isOnline:
+          updatedSensor?.status === "ACTIVE" ||
+          updatedSensor?.status === "LOW_BATTERY",
+      });
+    } catch (err) {
+      console.error("Refresh failed:", err);
+    }
+    setSensorQueryLoading(false);
+  };
+
   const getStatusColor = (fillLevel, flagged) => {
     if (flagged) return "#e53e3e";
     if (fillLevel >= 90) return "#e53e3e";
@@ -279,12 +359,6 @@ const BinsPage = () => {
     const matchesSearch =
       bin.binId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bin.locationName?.toLowerCase().includes(searchTerm.toLowerCase());
-    if (filterStatus === "all") return matchesSearch;
-    if (filterStatus === "flagged") return matchesSearch && bin.flagged;
-    if (filterStatus === "critical")
-      return matchesSearch && bin.fillLevel >= 90;
-    if (filterStatus === "full")
-      return matchesSearch && bin.fillLevel >= 70 && bin.fillLevel < 90;
     return matchesSearch;
   });
 
@@ -305,13 +379,15 @@ const BinsPage = () => {
 
   return (
     <div className="bins-page">
-      <style>{`.bins-page { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #f8fafc; min-height: 100vh; } .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; } .page-header h1 { font-size: 24px; color: #1a202c; font-weight: 700; margin: 0; } .btn-primary { background: #38a169; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; } .btn-primary:hover { background: #2f855a; } .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; } .search-input { padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; width: 240px; } .filter-btn { padding: 6px 12px; border: 1px solid #cbd5e0; background: white; border-radius: 4px; cursor: pointer; } .filter-btn.active { background: #38a169; color: white; } .bins-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; } .bin-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid #38a169; } .bin-card.flagged { border-left-color: #e53e3e; } .bin-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; } .bin-id { font-weight: 600; color: #1a202c; } .bin-location { color: #4a5568; font-size: 14px; margin-bottom: 8px; } .fill-bar { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin: 8px 0; } .fill-level { height: 100%; border-radius: 4px; transition: width 0.3s; } .bin-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; font-size: 13px; } .bin-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; } .btn-small { padding: 4px 12px; font-size: 12px; border-radius: 4px; border: none; cursor: pointer; } .btn-flag { background: #fed7d7; color: #e53e3e; } .btn-unflag { background: #c6f6d5; color: #38a169; } .btn-details { background: #bee3f8; color: #3182ce; } .btn-delete { background: #fed7d7; color: #e53e3e; } .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; } .modal-content { background: white; padding: 24px; border-radius: 8px; width: 400px; max-width: 90vw; } .form-group { margin-bottom: 16px; } .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #4a5568; } .form-group input { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; } .form-group input:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.2); } .modal-buttons { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; } .btn-secondary { background: #e2e8f0; color: #4a5568; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; } .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; } .status-flagged { background: #fed7d7; color: #e53e3e; } .status-critical { background: #fed7d7; color: #e53e3e; } .status-full { background: #feebc8; color: #dd6b20; } .status-normal { background: #c6f6d5; color: #38a169; } .delete-modal-icon { width: 64px; height: 64px; background: #fed7d7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; } .delete-modal-title { text-align: center; color: #1a202c; font-size: 20px; font-weight: 600; margin-bottom: 8px; } .delete-modal-message { text-align: center; color: #4a5568; font-size: 14px; line-height: 1.6; margin-bottom: 24px; } .delete-modal-buttons { display: flex; gap: 12px; justify-content: center; } .btn-delete-confirm { background: #e53e3e; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } .btn-cancel { background: #edf2f7; color: #4a5568; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } .no-bins { grid-column: 1 / -1; text-align: center; color: #718096; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; width: 100%; padding: 40px 20px; } .no-bins-icon { font-size: 80px; margin-bottom: 24px; opacity: 0.5; } .address-search-container { position: relative; } .address-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #cbd5e0; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 4px; } .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #edf2f7; font-size: 14px; } .suggestion-item:hover { background: #f8fafc; } .suggestion-item:last-child { border-bottom: none; } .geocoding-indicator { display: inline-block; width: 12px; height: 12px; border: 2px solid #cbd5e0; border-top-color: #38a169; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 8px; vertical-align: middle; } @keyframes spin { to { transform: rotate(360deg); } } .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .helper-text { font-size: 12px; color: #718096; margin-top: 4px; }`}</style>
+      <style>{`.bins-page { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #f8fafc; min-height: 100vh; } .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; } .page-header h1 { font-size: 24px; color: #1a202c; font-weight: 700; margin: 0; } .btn-primary { background: #38a169; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; } .btn-primary:hover { background: #2f855a; } .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; } .search-input { padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; width: 240px; } .filter-btn { padding: 6px 12px; border: 1px solid #cbd5e0; background: white; border-radius: 4px; cursor: pointer; } .filter-btn.active { background: #38a169; color: white; border-color: #38a169; } .bins-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; } .bin-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid #38a169; } .bin-card.flagged { border-left-color: #e53e3e; } .bin-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; } .bin-id { font-weight: 600; color: #1a202c; } .bin-location { color: #4a5568; font-size: 14px; margin-bottom: 8px; } .fill-bar { height: 8px; background: #edf2f7; border-radius: 4px; overflow: hidden; margin: 8px 0; } .fill-level { height: 100%; border-radius: 4px; transition: width 0.3s; } .bin-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; font-size: 13px; } .bin-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; } .btn-small { padding: 4px 12px; font-size: 12px; border-radius: 4px; border: none; cursor: pointer; } .btn-flag { background: #fed7d7; color: #e53e3e; } .btn-unflag { background: #c6f6d5; color: #38a169; } .btn-details { background: #bee3f8; color: #3182ce; } .btn-delete { background: #fed7d7; color: #e53e3e; } .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; } .modal-content { background: white; padding: 24px; border-radius: 8px; width: 400px; max-width: 90vw; } .form-group { margin-bottom: 16px; } .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #4a5568; } .form-group input { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 4px; } .form-group input:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.2); } .modal-buttons { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; } .btn-secondary { background: #e2e8f0; color: #4a5568; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; } .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; } .status-flagged { background: #fed7d7; color: #e53e3e; } .status-critical { background: #fed7d7; color: #e53e3e; } .status-full { background: #feebc8; color: #dd6b20; } .status-normal { background: #c6f6d5; color: #38a169; } .status-overdue { background: #fed7d7; color: #c53030; border: 1px solid #fc8181; } .delete-modal-icon { width: 64px; height: 64px; background: #fed7d7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; } .delete-modal-title { text-align: center; color: #1a202c; font-size: 20px; font-weight: 600; margin-bottom: 8px; } .delete-modal-message { text-align: center; color: #4a5568; font-size: 14px; line-height: 1.6; margin-bottom: 24px; } .delete-modal-buttons { display: flex; gap: 12px; justify-content: center; } .btn-delete-confirm { background: #e53e3e; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } .btn-cancel { background: #edf2f7; color: #4a5568; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; } .no-bins { grid-column: 1 / -1; text-align: center; color: #718096; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; width: 100%; padding: 40px 20px; } .no-bins-icon { font-size: 80px; margin-bottom: 24px; opacity: 0.5; } .address-search-container { position: relative; } .address-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #cbd5e0; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 4px; } .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #edf2f7; font-size: 14px; } .suggestion-item:hover { background: #f8fafc; } .suggestion-item:last-child { border-bottom: none; } .geocoding-indicator { display: inline-block; width: 12px; height: 12px; border: 2px solid #cbd5e0; border-top-color: #38a169; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 8px; vertical-align: middle; } @keyframes spin { to { transform: rotate(360deg); } } .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .helper-text { font-size: 12px; color: #718096; margin-top: 4px; }`}</style>
+
       <div className="page-header">
         <h1>Bin Management</h1>
         <button className="btn-primary" onClick={() => setShowAddModal(true)}>
           + Add Bin
         </button>
       </div>
+
       <div className="filters">
         <input
           type="text"
@@ -321,30 +397,49 @@ const BinsPage = () => {
           onChange={(e) => setSearchTerm(e.target.value)}
         />
         <button
-          className={`filter-btn ${filterStatus === "all" ? "active" : ""}`}
-          onClick={() => setFilterStatus("all")}
+          className={`filter-btn ${activeFilter === "all" ? "active" : ""}`}
+          onClick={() => setActiveFilter("all")}
         >
           All
         </button>
         <button
-          className={`filter-btn ${filterStatus === "flagged" ? "active" : ""}`}
-          onClick={() => setFilterStatus("flagged")}
+          className={`filter-btn ${activeFilter === "flagged" ? "active" : ""}`}
+          onClick={() => setActiveFilter("flagged")}
         >
           Flagged
         </button>
         <button
-          className={`filter-btn ${filterStatus === "critical" ? "active" : ""}`}
-          onClick={() => setFilterStatus("critical")}
+          className={`filter-btn ${activeFilter === "critical" ? "active" : ""}`}
+          onClick={() => setActiveFilter("critical")}
         >
           Critical (90%+)
         </button>
         <button
-          className={`filter-btn ${filterStatus === "full" ? "active" : ""}`}
-          onClick={() => setFilterStatus("full")}
+          className={`filter-btn ${activeFilter === "full" ? "active" : ""}`}
+          onClick={() => setActiveFilter("full")}
         >
           Full (70%+)
         </button>
+        <button
+          className={`filter-btn ${activeFilter === "overdue" ? "active" : ""}`}
+          onClick={() => setActiveFilter("overdue")}
+        >
+          Overdue
+        </button>
+        <button
+          className={`filter-btn ${activeFilter === "commercial" ? "active" : ""}`}
+          onClick={() => setActiveFilter("commercial")}
+        >
+          Commercial
+        </button>
+        <button
+          className={`filter-btn ${activeFilter === "public" ? "active" : ""}`}
+          onClick={() => setActiveFilter("public")}
+        >
+          Public
+        </button>
       </div>
+
       <div className="bins-grid">
         {filteredBins.length === 0 ? (
           <div className="no-bins">
@@ -366,11 +461,11 @@ const BinsPage = () => {
                 marginBottom: "24px",
               }}
             >
-              {searchTerm || filterStatus !== "all"
+              {searchTerm || activeFilter !== "all"
                 ? "Try adjusting your search or filters"
                 : "Get started by adding your first bin"}
             </p>
-            {!searchTerm && filterStatus === "all" && (
+            {!searchTerm && activeFilter === "all" && (
               <button
                 className="btn-primary"
                 onClick={() => setShowAddModal(true)}
@@ -391,17 +486,38 @@ const BinsPage = () => {
                   <div className="bin-id">{bin.binId}</div>
                   <div className="bin-location">📍 {bin.locationName}</div>
                 </div>
-                {bin.flagged && (
-                  <span className="status-badge status-flagged">⚠ Flagged</span>
-                )}
-                {!bin.flagged && bin.fillLevel >= 90 && (
-                  <span className="status-badge status-critical">
-                    🔴 Critical
-                  </span>
-                )}
-                {!bin.flagged && bin.fillLevel >= 70 && bin.fillLevel < 90 && (
-                  <span className="status-badge status-full">🟡 Full</span>
-                )}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "4px",
+                    alignItems: "flex-end",
+                  }}
+                >
+                  {bin.flagged && (
+                    <span className="status-badge status-flagged">
+                      ⚠ Flagged
+                    </span>
+                  )}
+                  {!bin.flagged && bin.fillLevel >= 90 && (
+                    <span className="status-badge status-critical">
+                      🔴 Critical
+                    </span>
+                  )}
+                  {!bin.flagged &&
+                    bin.fillLevel >= 70 &&
+                    bin.fillLevel < 90 && (
+                      <span className="status-badge status-full">🟡 Full</span>
+                    )}
+                  {bin.daysOverdue != null &&
+                    parseInt(bin.daysOverdue) > 0 &&
+                    bin.fillLevel > 0 && (
+                      <span className="status-badge status-overdue">
+                        ⏳ Overdue: {parseInt(bin.daysOverdue)} day
+                        {parseInt(bin.daysOverdue) !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                </div>
               </div>
               <div className="fill-bar">
                 <div
@@ -464,6 +580,17 @@ const BinsPage = () => {
                   </button>
                 )}
                 <button
+                  className="btn-small"
+                  onClick={() => openSensorQueryModal(bin)}
+                  style={{
+                    background: "#ebf8ff",
+                    color: "#2b6cb0",
+                    border: "1px solid #bee3f8",
+                  }}
+                >
+                  📡 Query Sensor
+                </button>
+                <button
                   className="btn-small btn-delete"
                   onClick={() => setShowDeleteConfirm(bin)}
                 >
@@ -474,7 +601,8 @@ const BinsPage = () => {
           ))
         )}
       </div>
-      {/* Modals omitted for brevity - keep your existing Add/Edit/Delete modals exactly as they are */}
+
+      {/* ── Add/Edit/Delete Modals (Unchanged) ── */}
       {showAddModal && (
         <div className="modal" onClick={() => setShowAddModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -608,6 +736,7 @@ const BinsPage = () => {
           </div>
         </div>
       )}
+
       {showEditModal && (
         <div className="modal" onClick={() => setShowEditModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -729,6 +858,7 @@ const BinsPage = () => {
           </div>
         </div>
       )}
+
       {showDeleteConfirm && (
         <div className="modal" onClick={() => setShowDeleteConfirm(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -736,7 +866,7 @@ const BinsPage = () => {
             <h3 className="delete-modal-title">Delete Bin?</h3>
             <p className="delete-modal-message">
               Are you sure you want to delete bin{" "}
-              <strong>{showDeleteConfirm.binId}</strong>?<br />
+              <strong>{showDeleteConfirm.binId}</strong>? <br />
               This action cannot be undone.
             </p>
             <div className="delete-modal-buttons">
@@ -753,7 +883,243 @@ const BinsPage = () => {
           </div>
         </div>
       )}
+
+      {/* ── REAL SENSOR TELEMETRY MODAL ── */}
+      {showSensorQueryModal && sensorQueryBin && (
+        <div className="modal" onClick={() => setShowSensorQueryModal(false)}>
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "460px" }}
+          >
+            <div style={{ marginBottom: "20px" }}>
+              <h2 style={{ margin: "0 0 4px" }}>📡 Live Sensor Telemetry</h2>
+              <p style={{ margin: 0, fontSize: "13px", color: "#718096" }}>
+                {sensorQueryBin.binId} — {sensorQueryBin.locationName}
+              </p>
+            </div>
+
+            {/* Telemetry Cards */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "12px",
+                marginBottom: "20px",
+              }}
+            >
+              <div
+                style={{
+                  background: "#f7fafc",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "8px",
+                  padding: "14px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "#718096",
+                    fontWeight: "600",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Battery Level
+                </div>
+                <div
+                  style={{
+                    fontSize: "24px",
+                    fontWeight: "700",
+                    color: sensorData?.battery < 20 ? "#e53e3e" : "#38a169",
+                    marginTop: "4px",
+                  }}
+                >
+                  {sensorData?.battery != null ? `${sensorData.battery}%` : "—"}
+                </div>
+                <div
+                  style={{
+                    height: "6px",
+                    background: "#e2e8f0",
+                    borderRadius: "3px",
+                    marginTop: "8px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${sensorData?.battery || 0}%`,
+                      background:
+                        sensorData?.battery < 20 ? "#e53e3e" : "#38a169",
+                      transition: "width 0.3s",
+                    }}
+                  />
+                </div>
+              </div>
+              <div
+                style={{
+                  background: "#f7fafc",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "8px",
+                  padding: "14px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "#718096",
+                    fontWeight: "600",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Status
+                </div>
+                <div style={{ marginTop: "6px" }}>
+                  <span
+                    style={{
+                      background: sensorData?.isOnline ? "#c6f6d5" : "#fed7d7",
+                      color: sensorData?.isOnline ? "#276749" : "#c53030",
+                      padding: "4px 10px",
+                      borderRadius: "99px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                    }}
+                  >
+                    {sensorData?.status || "UNKNOWN"}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "#718096",
+                    marginTop: "8px",
+                  }}
+                >
+                  Last Sync:{" "}
+                  {sensorData?.lastUpdated
+                    ? new Date(sensorData.lastUpdated).toLocaleTimeString()
+                    : "—"}
+                </div>
+              </div>
+            </div>
+
+            {/* Distance & Fill */}
+            <div
+              style={{
+                background: "#f7fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: "8px",
+                padding: "16px",
+                marginBottom: "20px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginBottom: "12px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: "#718096",
+                    fontWeight: "600",
+                  }}
+                >
+                  CURRENT DISTANCE
+                </div>
+                <div
+                  style={{
+                    fontSize: "16px",
+                    fontWeight: "700",
+                    color: "#2d3748",
+                  }}
+                >
+                  {sensorData?.distance} cm
+                </div>
+              </div>
+              <div
+                style={{
+                  height: "10px",
+                  background: "#e2e8f0",
+                  borderRadius: "5px",
+                  overflow: "hidden",
+                  marginBottom: "8px",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${sensorData?.fillLevel || 0}%`,
+                    height: "100%",
+                    background:
+                      (sensorData?.fillLevel || 0) >= 90
+                        ? "#e53e3e"
+                        : (sensorData?.fillLevel || 0) >= 70
+                          ? "#dd6b20"
+                          : "#38a169",
+                    borderRadius: "5px",
+                    transition: "width 0.4s ease",
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "#718096",
+                  textAlign: "right",
+                }}
+              >
+                {sensorData?.fillLevel}% full
+              </div>
+            </div>
+
+            {/* No Sensor Warning */}
+            {(!sensorQueryBin.sensorId ||
+              sensorQueryBin.sensorId === "N/A") && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "1px solid #fbd38d",
+                  borderRadius: "6px",
+                  padding: "10px 14px",
+                  fontSize: "13px",
+                  color: "#b7791f",
+                  marginBottom: "16px",
+                }}
+              >
+                ⚠ This bin has no sensor assigned. Assign one in the Sensors
+                page first.
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                className="btn-secondary"
+                onClick={() => setShowSensorQueryModal(false)}
+                style={{ flex: 1, padding: "10px" }}
+              >
+                Close
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleRefreshSensorData}
+                disabled={sensorQueryLoading}
+                style={{
+                  flex: 2,
+                  padding: "10px",
+                  opacity: sensorQueryLoading ? 0.7 : 1,
+                }}
+              >
+                {sensorQueryLoading ? "Syncing..." : "🔄 Refresh Live Data"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
 export default BinsPage;

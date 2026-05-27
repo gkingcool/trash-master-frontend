@@ -1,86 +1,96 @@
 // src/components/SettingsPage.jsx
-import React, { useState } from "react";
-// Import the store we just created
+import React, { useState, useEffect } from "react";
+import axios from "axios";
 import { getSystemSettings, setSystemSettings } from "../utils/settingsStore";
 
-// Import custom icons
 import settingsIcon from "../assets/icons/settings.png";
 import alertIcon from "../assets/icons/alert-icon.png";
 import routeIcon from "../assets/icons/routes-icon.png";
-import recyclingBinIcon from "../assets/icons/recycling-bin-icon.png";
-import accountIcon from "../assets/icons/account-icon.png";
+import deploymentsIcon from "../assets/icons/deployments.png";
 
-// Helper to safely read admin/user data from localStorage
-const getCurrentUser = () => {
-  try {
-    const auth = JSON.parse(localStorage.getItem("auth"));
-    if (auth?.firstName && auth?.lastName) {
-      return {
-        name: `${auth.firstName} ${auth.lastName}`,
-        initials: `${auth.firstName[0]}${auth.lastName[0]}`.toUpperCase(),
-        email: auth.email || "N/A",
-        role:
-          auth.role?.toString().charAt(0).toUpperCase() +
-            auth.role?.toString().slice(1).toLowerCase() || "Admin",
-      };
-    }
-  } catch (e) {
-    console.warn("Auth data not found or invalid");
-  }
-  // Fallback if not logged in or missing fields
-  return {
-    name: "Admin User",
-    initials: "AU",
-    email: "admin@trashmasters.com",
-    role: "Admin",
-  };
-};
+const API = "http://localhost:8080";
 
 const SettingsPage = () => {
   const [activeTab, setActiveTab] = useState("general");
   const [saved, setSaved] = useState(false);
-
-  // ✅ Initialize state from the shared store (instead of hardcoded values)
   const [systemSettings, setSystemSettingsState] =
     useState(getSystemSettings());
 
-  // Alert Thresholds
-  const [alertSettings, setAlertSettings] = useState({
+  // Alert thresholds
+  const [alertSettings, setAlertSettings] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("alertSettings")) || {};
+    } catch {
+      return {};
+    }
+  });
+  const alertState = {
     binFullThreshold: 80,
     urgentThreshold: 95,
     temperatureAlert: true,
     sensorOfflineAlert: true,
     routeDelayAlert: true,
-    emailNotifications: true,
-    smsNotifications: false,
-  });
+    ...alertSettings,
+  };
 
-  // Route Configuration
-  const [routeSettings, setRouteSettings] = useState({
+  // Route settings
+  const [routeSettings, setRouteSettings] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("routeSettings")) || {};
+    } catch {
+      return {};
+    }
+  });
+  const routeState = {
     autoGenerateRoutes: true,
-    optimizationStrategy: "smart",
-    maxStopsPerRoute: 20,
-    maxRouteDuration: 8,
-    considerTraffic: true,
-    prioritizeUrgentBins: true,
-  });
+    optimizationStrategy: "predictive",
+    ...routeSettings,
+  };
 
-  // Bin Management
-  const [binSettings, setBinSettings] = useState({
-    binTypes: [
-      "Recycling (Blue)",
-      "General Waste (Green)",
-      "Organic (Brown)",
-      "Hazardous (Red)",
-    ],
-    defaultCapacity: 100,
-    sensorUpdateInterval: 15,
-    maintenanceInterval: 90,
-  });
+  // System health (System tab)
+  const [health, setHealth] = useState(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
-  // ✅ Save to the shared store
+  // Dev tools
+  const [devLoading, setDevLoading] = useState({});
+  const [devResult, setDevResult] = useState(null);
+
+  useEffect(() => {
+    if (activeTab === "system") fetchHealth();
+  }, [activeTab]);
+
+  const fetchHealth = async () => {
+    setHealthLoading(true);
+    try {
+      const res = await axios.get(`${API}/api/system/health`);
+      setHealth(res.data);
+    } catch {
+      setHealth(null);
+    }
+    setHealthLoading(false);
+  };
+
+  const runDevTool = async (key, endpoint, label) => {
+    if (!window.confirm(`Run "${label}"? This will modify the database.`))
+      return;
+    setDevLoading((prev) => ({ ...prev, [key]: true }));
+    setDevResult(null);
+    try {
+      const res = await axios.post(`${API}${endpoint}`);
+      setDevResult({ success: true, message: res.data });
+    } catch (err) {
+      setDevResult({
+        success: false,
+        message: err.response?.data || "Request failed.",
+      });
+    }
+    setDevLoading((prev) => ({ ...prev, [key]: false }));
+  };
+
   const handleSave = () => {
     setSystemSettings(systemSettings);
+    localStorage.setItem("alertSettings", JSON.stringify(alertState));
+    localStorage.setItem("routeSettings", JSON.stringify(routeState));
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -89,102 +99,173 @@ const SettingsPage = () => {
     { id: "general", label: "General", icon: settingsIcon },
     { id: "alerts", label: "Alerts", icon: alertIcon },
     { id: "routes", label: "Routes", icon: routeIcon },
-    { id: "bins", label: "Bins", icon: recyclingBinIcon },
-    { id: "account", label: "Account", icon: accountIcon },
+    { id: "system", label: "System Health", icon: deploymentsIcon },
+    { id: "systemAdmin", label: "System Admin", icon: settingsIcon },
+  ];
+
+  const operationalTools = [
+    {
+      key: "predictions",
+      label: "🤖 Refresh AI Predictions",
+      endpoint: "/api/admin/predictions/force-update",
+      desc: "Re-runs SageMaker predictions for all bins (4h, 8h, 12h). Run before generating routes.",
+      color: "#3182ce",
+    },
+    {
+      key: "boost",
+      label: "📈 Boost Bin Fill Levels",
+      endpoint: "/api/dev/boost-fill-levels",
+      desc: "Sets ~90% of bins to 75%+ full. 20% critical, 70% high, 10% normal. Good for demos.",
+      color: "#dd6b20",
+    },
+    {
+      key: "resetTrucks",
+      label: "🚛 Reset Truck Loads",
+      endpoint: "/api/dev/reset-truck-loads",
+      desc: "Resets all truck compacted yards to 0. Use at start of day if end-of-day wasn't called.",
+      color: "#718096",
+    },
+  ];
+
+  const dataTools = [
+    {
+      key: "fixLoc",
+      label: "📍 Fix Bin Locations & Sensors",
+      endpoint: "/api/dev/fix-locations-and-sensors",
+      desc: "One-time migration: reassigns bin coordinates to Bellevue clusters and creates IOT sensors.",
+      color: "#805ad5",
+    },
+    {
+      key: "coords",
+      label: "🗺️ Update Bin Coordinates",
+      endpoint: "/api/dev/update-bin-coordinates",
+      desc: "Applies precise lat/lon to BEL-BIN-001 through BEL-BIN-070.",
+      color: "#2f855a",
+    },
+    {
+      key: "seed",
+      label: "🌱 Seed Database",
+      endpoint: "/api/dev/seed",
+      desc: "Populates MongoDB with sample bins, trucks, employees and 90 days of sensor history. Only runs on empty DB.",
+      color: "#e53e3e",
+    },
   ];
 
   return (
-    <div className="settings-page">
-      <style>{`
-        .settings-page { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f8fafc; min-height: 100vh; }
-        .settings-header { margin-bottom: 24px; }
-        .settings-header h1 { font-size: 24px; color: #2d3748; margin: 0 0 8px 0; }
-        .settings-header p { color: #718096; margin: 0; }
-        .settings-container { display: flex; gap: 24px; }
-        .settings-tabs { width: 240px; background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); height: fit-content; }
-        .tab-button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; border: none; background: transparent; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; color: #4a5568; transition: all 0.2s; text-align: left; }
-        .tab-button:hover { background: #f8fafc; }
-        .tab-button.active { background: #38a169; color: white; }
-        .tab-icon { width: 20px; height: 20px; object-fit: contain; }
-        .settings-content { flex: 1; background: white; border-radius: 8px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .section-title { font-size: 18px; font-weight: 600; color: #2d3748; margin: 0 0 24px 0; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
-        .form-group { margin-bottom: 20px; }
-        .form-group label { display: block; font-size: 14px; font-weight: 500; color: #4a5568; margin-bottom: 6px; }
-        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px; transition: all 0.2s; }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: #38a169; box-shadow: 0 0 0 3px rgba(56, 161, 105, 0.1); }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .checkbox-group { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-        .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: #38a169; }
-        .checkbox-group label { margin: 0; cursor: pointer; font-size: 14px; color: #4a5568; }
-        .checkbox-description { font-size: 12px; color: #718096; margin-left: 28px; margin-top: -8px; margin-bottom: 12px; }
-        .slider-group { margin-bottom: 24px; }
-        .slider-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
-        .slider-label { font-size: 14px; font-weight: 500; color: #4a5568; }
-        .slider-value { font-size: 14px; font-weight: 600; color: #38a169; }
-        .slider { width: 100%; height: 6px; border-radius: 3px; background: #e2e8f0; outline: none; -webkit-appearance: none; }
-        .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #38a169; cursor: pointer; }
-        .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-        .tag { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: #edf2f7; border-radius: 20px; font-size: 13px; color: #4a5568; }
-        .tag-remove { cursor: pointer; color: #e53e3e; font-weight: bold; }
-        .save-button { background: #38a169; color: white; border: none; padding: 12px 32px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; margin-top: 24px; }
-        .save-button:hover { background: #2f855a; transform: translateY(-1px); box-shadow: 0 4px 6px rgba(56, 161, 105, 0.3); }
-        .save-message { position: fixed; top: 20px; right: 20px; background: #38a169; color: white; padding: 16px 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideIn 0.3s ease; z-index: 1000; }
-        @keyframes slideIn { from { transform: translateX(400px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .info-box { background: #ebf8ff; border-left: 4px solid #3182ce; padding: 12px 16px; border-radius: 4px; margin-bottom: 24px; }
-        .info-box p { margin: 0; font-size: 14px; color: #2c5282; }
-        .password-section { margin-top: 32px; padding-top: 24px; border-top: 2px solid #e2e8f0; }
-        .password-section h3 { font-size: 16px; color: #2d3748; margin-bottom: 16px; }
-      `}</style>
-
+    <div
+      style={{
+        fontFamily: "'Segoe UI', sans-serif",
+        padding: "20px",
+        background: "#f8fafc",
+        minHeight: "100vh",
+      }}
+    >
       {saved && (
-        <div className="save-message">✓ Settings saved successfully!</div>
+        <div
+          style={{
+            position: "fixed",
+            top: "20px",
+            right: "20px",
+            background: "#38a169",
+            color: "white",
+            padding: "14px 24px",
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 1000,
+            fontWeight: "600",
+          }}
+        >
+          ✓ Settings saved!
+        </div>
       )}
 
-      <div className="settings-header">
-        <h1>Settings</h1>
-        <p>Configure system parameters and preferences</p>
+      <div style={{ marginBottom: "24px" }}>
+        <h1 style={{ fontSize: "24px", color: "#2d3748", margin: "0 0 4px" }}>
+          Settings
+        </h1>
+        <p style={{ color: "#718096", margin: 0 }}>
+          Configure system parameters and preferences
+        </p>
       </div>
 
-      <div className="settings-container">
-        <div className="settings-tabs">
+      <div style={{ display: "flex", gap: "24px" }}>
+        {/* Sidebar */}
+        <div
+          style={{
+            width: "200px",
+            background: "white",
+            borderRadius: "8px",
+            padding: "12px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+            height: "fit-content",
+          }}
+        >
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
               onClick={() => setActiveTab(tab.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                width: "100%",
+                padding: "11px 14px",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: "500",
+                textAlign: "left",
+                marginBottom: "3px",
+                background: activeTab === tab.id ? "#38a169" : "transparent",
+                color: activeTab === tab.id ? "white" : "#4a5568",
+                transition: "all 0.15s",
+              }}
             >
-              <img src={tab.icon} alt={tab.label} className="tab-icon" />
+              <img
+                src={tab.icon}
+                alt={tab.label}
+                style={{ width: "18px", height: "18px", objectFit: "contain" }}
+              />
               {tab.label}
             </button>
           ))}
         </div>
 
-        <div className="settings-content">
-          {/* General Settings */}
+        {/* Content */}
+        <div
+          style={{
+            flex: 1,
+            background: "white",
+            borderRadius: "8px",
+            padding: "32px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+          }}
+        >
+          {/* ── General ── */}
           {activeTab === "general" && (
-            <div>
-              <h2 className="section-title">General Configuration</h2>
-
-              <div className="form-group">
-                <label>Company Name</label>
-                <input
-                  type="text"
-                  value={systemSettings.companyName}
-                  onChange={(e) =>
-                    setSystemSettingsState({
-                      ...systemSettings,
-                      companyName: e.target.value,
-                    })
-                  }
-                />
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Contact Email</label>
+            <>
+              <h2 style={sTitle}>General Configuration</h2>
+              <div style={formRow}>
+                <div style={formGroup}>
+                  <label style={label}>Company Name</label>
                   <input
+                    style={input}
+                    value={systemSettings.companyName || ""}
+                    onChange={(e) =>
+                      setSystemSettingsState({
+                        ...systemSettings,
+                        companyName: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div style={formGroup}>
+                  <label style={label}>Contact Email</label>
+                  <input
+                    style={input}
                     type="email"
-                    value={systemSettings.contactEmail}
+                    value={systemSettings.contactEmail || ""}
                     onChange={(e) =>
                       setSystemSettingsState({
                         ...systemSettings,
@@ -193,11 +274,14 @@ const SettingsPage = () => {
                     }
                   />
                 </div>
-                <div className="form-group">
-                  <label>Phone Number</label>
+              </div>
+              <div style={formRow}>
+                <div style={formGroup}>
+                  <label style={label}>Phone Number</label>
                   <input
+                    style={input}
                     type="tel"
-                    value={systemSettings.phone}
+                    value={systemSettings.phone || ""}
                     onChange={(e) =>
                       setSystemSettingsState({
                         ...systemSettings,
@@ -206,27 +290,11 @@ const SettingsPage = () => {
                     }
                   />
                 </div>
-              </div>
-
-              <div className="form-group">
-                <label>Starting Depot Address</label>
-                <textarea
-                  rows="2"
-                  value={systemSettings.address}
-                  onChange={(e) =>
-                    setSystemSettingsState({
-                      ...systemSettings,
-                      address: e.target.value,
-                    })
-                  }
-                />
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Timezone</label>
+                <div style={formGroup}>
+                  <label style={label}>Timezone</label>
                   <select
-                    value={systemSettings.timezone}
+                    style={input}
+                    value={systemSettings.timezone || "America/Los_Angeles"}
                     onChange={(e) =>
                       setSystemSettingsState({
                         ...systemSettings,
@@ -242,289 +310,844 @@ const SettingsPage = () => {
                     <option value="America/New_York">Eastern Time (ET)</option>
                   </select>
                 </div>
-                <div className="form-group">
-                  <label>Date Format</label>
-                  <select
-                    value={systemSettings.dateFormat}
-                    onChange={(e) =>
-                      setSystemSettingsState({
-                        ...systemSettings,
-                        dateFormat: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                    <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                    <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                  </select>
-                </div>
               </div>
-            </div>
+              <div style={formGroup}>
+                <label style={label}>Starting Depot Address</label>
+                <textarea
+                  style={{ ...input, resize: "vertical", minHeight: "70px" }}
+                  value={systemSettings.address || ""}
+                  onChange={(e) =>
+                    setSystemSettingsState({
+                      ...systemSettings,
+                      address: e.target.value,
+                    })
+                  }
+                />
+              </div>
+              <button style={saveBtn} onClick={handleSave}>
+                Save Settings
+              </button>
+            </>
           )}
 
-          {/* Alert Settings */}
+          {/* ── Alerts ── */}
           {activeTab === "alerts" && (
-            <div>
-              <h2 className="section-title">Alert Configuration</h2>
-              <div className="info-box">
-                <p>
-                  Set thresholds for automated alerts. These complement the KPIs
-                  shown on the dashboard.
+            <>
+              <h2 style={sTitle}>Alert Configuration</h2>
+              <div
+                style={{
+                  background: "#ebf8ff",
+                  borderLeft: "4px solid #3182ce",
+                  padding: "12px 16px",
+                  borderRadius: "4px",
+                  marginBottom: "24px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "14px", color: "#2c5282" }}>
+                  Thresholds set here are saved and read by the Dashboard and
+                  BinsPage filter buttons.
                 </p>
               </div>
-
-              <div className="slider-group">
-                <div className="slider-header">
-                  <span className="slider-label">
-                    Bin Full Alert Threshold (%)
-                  </span>
-                  <span className="slider-value">
-                    {alertSettings.binFullThreshold}%
-                  </span>
+              {[
+                {
+                  key: "binFullThreshold",
+                  label: "Bin Full Alert Threshold (%)",
+                  min: 50,
+                  max: 100,
+                },
+                {
+                  key: "urgentThreshold",
+                  label: "Urgent Priority Threshold (%)",
+                  min: 80,
+                  max: 100,
+                },
+              ].map((s) => (
+                <div key={s.key} style={{ marginBottom: "24px" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "14px",
+                        fontWeight: "500",
+                        color: "#4a5568",
+                      }}
+                    >
+                      {s.label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "14px",
+                        fontWeight: "700",
+                        color: "#38a169",
+                      }}
+                    >
+                      {alertState[s.key]}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={s.min}
+                    max={s.max}
+                    value={alertState[s.key]}
+                    onChange={(e) =>
+                      setAlertSettings({
+                        ...alertState,
+                        [s.key]: parseInt(e.target.value),
+                      })
+                    }
+                    style={{ width: "100%", accentColor: "#38a169" }}
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="50"
-                  max="100"
-                  value={alertSettings.binFullThreshold}
-                  onChange={(e) =>
-                    setAlertSettings({
-                      ...alertSettings,
-                      binFullThreshold: parseInt(e.target.value),
-                    })
-                  }
-                  className="slider"
-                />
-              </div>
-
-              <div className="slider-group">
-                <div className="slider-header">
-                  <span className="slider-label">
-                    Urgent Priority Threshold (%)
-                  </span>
-                  <span className="slider-value">
-                    {alertSettings.urgentThreshold}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="80"
-                  max="100"
-                  value={alertSettings.urgentThreshold}
-                  onChange={(e) =>
-                    setAlertSettings({
-                      ...alertSettings,
-                      urgentThreshold: parseInt(e.target.value),
-                    })
-                  }
-                  className="slider"
-                />
-              </div>
-
+              ))}
               <h3
                 style={{
                   fontSize: "16px",
-                  margin: "24px 0 16px",
+                  fontWeight: "600",
                   color: "#2d3748",
+                  margin: "24px 0 16px",
                 }}
               >
                 Notification Types
               </h3>
-              <div className="checkbox-group">
-                <input
-                  type="checkbox"
-                  id="temperatureAlert"
-                  checked={alertSettings.temperatureAlert}
-                  onChange={(e) =>
-                    setAlertSettings({
-                      ...alertSettings,
-                      temperatureAlert: e.target.checked,
-                    })
-                  }
-                />
-                <label htmlFor="temperatureAlert">
-                  Temperature Anomaly Alerts
-                </label>
-              </div>
-              <div className="checkbox-group">
-                <input
-                  type="checkbox"
-                  id="sensorOfflineAlert"
-                  checked={alertSettings.sensorOfflineAlert}
-                  onChange={(e) =>
-                    setAlertSettings({
-                      ...alertSettings,
-                      sensorOfflineAlert: e.target.checked,
-                    })
-                  }
-                />
-                <label htmlFor="sensorOfflineAlert">
-                  Sensor Offline Alerts
-                </label>
-              </div>
-              <div className="checkbox-group">
-                <input
-                  type="checkbox"
-                  id="routeDelayAlert"
-                  checked={alertSettings.routeDelayAlert}
-                  onChange={(e) =>
-                    setAlertSettings({
-                      ...alertSettings,
-                      routeDelayAlert: e.target.checked,
-                    })
-                  }
-                />
-                <label htmlFor="routeDelayAlert">
-                  Route Delay Notifications
-                </label>
-              </div>
-            </div>
+              {[
+                { id: "temperatureAlert", label: "Temperature Anomaly Alerts" },
+                { id: "sensorOfflineAlert", label: "Sensor Offline Alerts" },
+                { id: "routeDelayAlert", label: "Route Delay Notifications" },
+              ].map((n) => (
+                <div
+                  key={n.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    marginBottom: "12px",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    id={n.id}
+                    checked={alertState[n.id]}
+                    style={{
+                      width: "18px",
+                      height: "18px",
+                      accentColor: "#38a169",
+                    }}
+                    onChange={(e) =>
+                      setAlertSettings({
+                        ...alertState,
+                        [n.id]: e.target.checked,
+                      })
+                    }
+                  />
+                  <label
+                    htmlFor={n.id}
+                    style={{
+                      fontSize: "14px",
+                      color: "#4a5568",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {n.label}
+                  </label>
+                </div>
+              ))}
+              <button style={saveBtn} onClick={handleSave}>
+                Save Settings
+              </button>
+            </>
           )}
 
-          {/* Route Settings */}
+          {/* ── Routes ── */}
           {activeTab === "routes" && (
-            <div>
-              <h2 className="section-title">Route Optimization</h2>
-              <div className="info-box">
-                <p>
-                  These settings define <strong>default behavior</strong> for
-                  route generation.
+            <>
+              <h2 style={sTitle}>Route Optimization</h2>
+              <div
+                style={{
+                  background: "#ebf8ff",
+                  borderLeft: "4px solid #3182ce",
+                  padding: "12px 16px",
+                  borderRadius: "4px",
+                  marginBottom: "24px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "14px", color: "#2c5282" }}>
+                  The strategy selected here is saved and pre-selected when you
+                  open the Route Planner.
                 </p>
               </div>
-
-              <div className="checkbox-group">
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  marginBottom: "20px",
+                }}
+              >
                 <input
                   type="checkbox"
-                  id="autoGenerateRoutes"
-                  checked={routeSettings.autoGenerateRoutes}
+                  id="autoGen"
+                  checked={routeState.autoGenerateRoutes}
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    accentColor: "#38a169",
+                  }}
                   onChange={(e) =>
                     setRouteSettings({
-                      ...routeSettings,
+                      ...routeState,
                       autoGenerateRoutes: e.target.checked,
                     })
                   }
                 />
-                <label htmlFor="autoGenerateRoutes">
+                <label
+                  htmlFor="autoGen"
+                  style={{
+                    fontSize: "14px",
+                    color: "#4a5568",
+                    cursor: "pointer",
+                  }}
+                >
                   Enable Auto-Generation (Daily at 6 AM)
                 </label>
               </div>
-
-              <div className="form-group" style={{ marginTop: "20px" }}>
-                <label>Default Optimization Strategy</label>
+              <div style={formGroup}>
+                <label style={label}>Default Optimization Strategy</label>
                 <select
-                  value={routeSettings.optimizationStrategy}
+                  style={input}
+                  value={routeState.optimizationStrategy}
                   onChange={(e) =>
                     setRouteSettings({
-                      ...routeSettings,
+                      ...routeState,
                       optimizationStrategy: e.target.value,
                     })
                   }
                 >
-                  <option value="smart">Smart Route (AI-Predictive)</option>
-                  <option value="distance">Shortest Distance</option>
-                  <option value="time">Fastest Time</option>
+                  <option value="predictive">
+                    Smart Route (AI-Predictive)
+                  </option>
+                  <option value="tsp">Smart Route (TSP Optimization)</option>
                 </select>
               </div>
-            </div>
+              <button style={saveBtn} onClick={handleSave}>
+                Save Settings
+              </button>
+            </>
           )}
 
-          {/* Bin Settings */}
-          {activeTab === "bins" && (
-            <div>
-              <h2 className="section-title">Bin Configuration</h2>
-              <div className="form-group">
-                <label>Bin Types</label>
-                <div className="tag-list">
-                  {binSettings.binTypes.map((type, index) => (
-                    <span key={index} className="tag">
-                      {type}
-                      <span
-                        className="tag-remove"
-                        onClick={() => {
-                          const newTypes = binSettings.binTypes.filter(
-                            (_, i) => i !== index,
-                          );
-                          setBinSettings({
-                            ...binSettings,
-                            binTypes: newTypes,
-                          });
+          {/* ── Dev Tools ──
+          {activeTab === "devtools" && (
+            <>
+              <h2 style={sTitle}>🛠️ Developer Tools</h2>
+              <div
+                style={{
+                  background: "#fffbeb",
+                  borderLeft: "4px solid #d69e2e",
+                  padding: "12px 16px",
+                  borderRadius: "4px",
+                  marginBottom: "24px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "14px", color: "#744210" }}>
+                  These tools directly call backend endpoints and modify the
+                  database.
+                </p>
+              </div>
+              {devResult && (
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: "6px",
+                    marginBottom: "16px",
+                    fontSize: "13px",
+                    background: devResult.success ? "#f0fff4" : "#fff5f5",
+                    border: `1px solid ${devResult.success ? "#9ae6b4" : "#feb2b2"}`,
+                    color: devResult.success ? "#276749" : "#c53030",
+                  }}
+                >
+                  {devResult.success ? "✓ " : "✕ "}
+                  {devResult.message}
+                </div>
+              )}
+              {devTools.map((tool) => (
+                <div
+                  key={tool.key}
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    padding: "16px 20px",
+                    marginBottom: "10px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "16px",
+                  }}
+                >
+                  <div>
+                    <h4
+                      style={{
+                        margin: "0 0 4px",
+                        fontSize: "14px",
+                        fontWeight: "600",
+                        color: "#2d3748",
+                      }}
+                    >
+                      {tool.label}
+                    </h4>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "12px",
+                        color: "#718096",
+                        lineHeight: "1.5",
+                      }}
+                    >
+                      {tool.desc}
+                    </p>
+                  </div>
+                  <button
+                    disabled={devLoading[tool.key]}
+                    onClick={() =>
+                      runDevTool(tool.key, tool.endpoint, tool.label)
+                    }
+                    style={{
+                      padding: "8px 18px",
+                      border: "none",
+                      borderRadius: "6px",
+                      fontWeight: "600",
+                      fontSize: "13px",
+                      cursor: devLoading[tool.key] ? "not-allowed" : "pointer",
+                      whiteSpace: "nowrap",
+                      color: "white",
+                      background: devLoading[tool.key] ? "#a0aec0" : tool.color,
+                    }}
+                  >
+                    {devLoading[tool.key] ? "Running..." : "Run"}
+                  </button>
+                </div>
+              ))}
+            </>
+          )} */}
+
+          {/* ── System Admin ── */}
+          {activeTab === "systemAdmin" && (
+            <>
+              <h2 style={sTitle}>System Administration</h2>
+              <div
+                style={{
+                  background: "#ebf8ff",
+                  borderLeft: "4px solid #3182ce",
+                  padding: "12px 16px",
+                  borderRadius: "4px",
+                  marginBottom: "24px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "14px", color: "#2c5282" }}>
+                  <strong>Super Admin Only:</strong> These tools execute direct
+                  database operations and AI model triggers. Use with caution.
+                </p>
+              </div>
+
+              {devResult && (
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: "6px",
+                    marginBottom: "24px",
+                    fontSize: "13px",
+                    background: devResult.success ? "#f0fff4" : "#fff5f5",
+                    border: `1px solid ${devResult.success ? "#9ae6b4" : "#feb2b2"}`,
+                    color: devResult.success ? "#276749" : "#c53030",
+                  }}
+                >
+                  {devResult.success ? "✓ " : "✕ "}
+                  {devResult.message}
+                </div>
+              )}
+
+              {/* Group 1: Operational Actions */}
+              <h3
+                style={{
+                  fontSize: "14px",
+                  fontWeight: "600",
+                  color: "#4a5568",
+                  marginBottom: "12px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Operational Actions
+              </h3>
+              {operationalTools.map((tool) => (
+                <div
+                  key={tool.key}
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    padding: "16px 20px",
+                    marginBottom: "10px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "16px",
+                    background: "white",
+                  }}
+                >
+                  <div>
+                    <h4
+                      style={{
+                        margin: "0 0 4px",
+                        fontSize: "14px",
+                        fontWeight: "600",
+                        color: "#2d3748",
+                      }}
+                    >
+                      {tool.label}
+                    </h4>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "12px",
+                        color: "#718096",
+                        lineHeight: "1.5",
+                      }}
+                    >
+                      {tool.desc}
+                    </p>
+                  </div>
+                  <button
+                    disabled={devLoading[tool.key]}
+                    onClick={() =>
+                      runDevTool(tool.key, tool.endpoint, tool.label)
+                    }
+                    style={{
+                      padding: "8px 18px",
+                      border: "none",
+                      borderRadius: "6px",
+                      fontWeight: "600",
+                      fontSize: "13px",
+                      cursor: devLoading[tool.key] ? "not-allowed" : "pointer",
+                      whiteSpace: "nowrap",
+                      color: "white",
+                      background: devLoading[tool.key] ? "#a0aec0" : tool.color,
+                    }}
+                  >
+                    {devLoading[tool.key] ? "Running..." : "Execute"}
+                  </button>
+                </div>
+              ))}
+
+              {/* Group 2: Data Management */}
+              <h3
+                style={{
+                  fontSize: "14px",
+                  fontWeight: "600",
+                  color: "#4a5568",
+                  margin: "24px 0 12px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Data Management & Setup
+              </h3>
+              {dataTools.map((tool) => (
+                <div
+                  key={tool.key}
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    padding: "16px 20px",
+                    marginBottom: "10px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "16px",
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div>
+                    <h4
+                      style={{
+                        margin: "0 0 4px",
+                        fontSize: "14px",
+                        fontWeight: "600",
+                        color: "#2d3748",
+                      }}
+                    >
+                      {tool.label}
+                    </h4>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "12px",
+                        color: "#718096",
+                        lineHeight: "1.5",
+                      }}
+                    >
+                      {tool.desc}
+                    </p>
+                  </div>
+                  <button
+                    disabled={devLoading[tool.key]}
+                    onClick={() =>
+                      runDevTool(tool.key, tool.endpoint, tool.label)
+                    }
+                    style={{
+                      padding: "8px 18px",
+                      border: "none",
+                      borderRadius: "6px",
+                      fontWeight: "600",
+                      fontSize: "13px",
+                      cursor: devLoading[tool.key] ? "not-allowed" : "pointer",
+                      whiteSpace: "nowrap",
+                      color: "white",
+                      background: devLoading[tool.key] ? "#a0aec0" : tool.color,
+                    }}
+                  >
+                    {devLoading[tool.key] ? "Running..." : "Execute"}
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ── System Health ── */}
+          {activeTab === "system" && (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "24px",
+                }}
+              >
+                <h2
+                  style={{
+                    ...sTitle,
+                    margin: 0,
+                    borderBottom: "none",
+                    paddingBottom: 0,
+                  }}
+                >
+                  System Health & Monitoring
+                </h2>
+                <button
+                  onClick={fetchHealth}
+                  style={{
+                    background: "white",
+                    border: "1px solid #e2e8f0",
+                    padding: "8px 16px",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    fontWeight: "600",
+                    color: "#4a5568",
+                    fontSize: "13px",
+                  }}
+                >
+                  {healthLoading ? "Loading..." : "🔄 Refresh"}
+                </button>
+              </div>
+
+              {healthLoading && !health && (
+                <div
+                  style={{
+                    textAlign: "center",
+                    color: "#718096",
+                    padding: "40px",
+                  }}
+                >
+                  Loading system health...
+                </div>
+              )}
+              {!healthLoading && !health && (
+                <div
+                  style={{
+                    textAlign: "center",
+                    color: "#e53e3e",
+                    background: "#fff5f5",
+                    padding: "20px",
+                    borderRadius: "8px",
+                  }}
+                >
+                  ⚠️ Could not connect to backend. Is Spring Boot running on
+                  port 8080?
+                </div>
+              )}
+              {health && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                    gap: "20px",
+                  }}
+                >
+                  {/* DB Stats */}
+                  <div style={card}>
+                    <div style={cardHeader}>
+                      <div style={{ ...cardIcon, background: "#ebf8ff" }}>
+                        📊
+                      </div>
+                      <div>
+                        <h3 style={cardTitle}>Database Statistics</h3>
+                        <p style={cardSub}>MongoDB Collection Counts</p>
+                      </div>
+                    </div>
+                    {[
+                      {
+                        label: "Total Bins",
+                        value: health.totalBins,
+                        icon: "🗑️",
+                      },
+                      {
+                        label: "Total Trucks",
+                        value: health.totalTrucks,
+                        icon: "🚛",
+                      },
+                      {
+                        label: "Total Routes",
+                        value: health.totalRoutes,
+                        icon: "🗺️",
+                        highlight: true,
+                      },
+                    ].map((s) => (
+                      <div
+                        key={s.label}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "10px 12px",
+                          background: s.highlight ? "#ebf8ff" : "#f8fafc",
+                          borderRadius: "6px",
+                          marginBottom: "8px",
+                          border: s.highlight ? "1px solid #bee3f8" : "none",
                         }}
                       >
-                        ×
-                      </span>
-                    </span>
-                  ))}
+                        <span
+                          style={{
+                            fontSize: "14px",
+                            color: s.highlight ? "#2b6cb0" : "#4a5568",
+                          }}
+                        >
+                          {s.icon} {s.label}
+                        </span>
+                        <span
+                          style={{
+                            fontWeight: "700",
+                            fontSize: "18px",
+                            fontFamily: "monospace",
+                            color: s.highlight ? "#2b6cb0" : "#2d3748",
+                          }}
+                        >
+                          {s.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Last Route */}
+                  <div style={card}>
+                    <div style={cardHeader}>
+                      <div style={{ ...cardIcon, background: "#faf5ff" }}>
+                        🗺️
+                      </div>
+                      <div>
+                        <h3 style={cardTitle}>Last Route Generation</h3>
+                        <p style={cardSub}>Most Recent Successful Run</p>
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "20px",
+                        background: "#f8fafc",
+                        borderRadius: "8px",
+                        border: "1px dashed #cbd5e0",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "12px",
+                          color: "#718096",
+                          marginBottom: "8px",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.05em",
+                          fontWeight: "600",
+                        }}
+                      >
+                        Timestamp
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "16px",
+                          fontWeight: "700",
+                          color:
+                            health.lastRouteGenerated === "Never"
+                              ? "#e53e3e"
+                              : "#2d3748",
+                        }}
+                      >
+                        {health.lastRouteGenerated === "Never"
+                          ? "No routes generated yet"
+                          : new Date(
+                              health.lastRouteGenerated,
+                            ).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Service Status */}
+                  <div style={card}>
+                    <div style={cardHeader}>
+                      <div style={{ ...cardIcon, background: "#f0fff4" }}>
+                        🔌
+                      </div>
+                      <div>
+                        <h3 style={cardTitle}>Service Connectivity</h3>
+                        <p style={cardSub}>External API & AI Status</p>
+                      </div>
+                    </div>
+                    {[
+                      { label: "MongoDB Database", key: "mongoDbStatus" },
+                      { label: "Mapbox Routing API", key: "mapboxApiStatus" },
+                      { label: "SageMaker AI Model", key: "sageMakerStatus" },
+                    ].map((s) => (
+                      <div
+                        key={s.key}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "10px 0",
+                          borderBottom: "1px solid #f7fafc",
+                        }}
+                      >
+                        <span style={{ fontSize: "14px", color: "#4a5568" }}>
+                          {s.label}
+                        </span>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "4px 12px",
+                            borderRadius: "20px",
+                            fontSize: "12px",
+                            fontWeight: "600",
+                            background:
+                              health[s.key] === "Connected"
+                                ? "#c6f6d5"
+                                : "#fed7d7",
+                            color:
+                              health[s.key] === "Connected"
+                                ? "#2f855a"
+                                : "#c53030",
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: "7px",
+                              height: "7px",
+                              borderRadius: "50%",
+                              background:
+                                health[s.key] === "Connected"
+                                  ? "#38a169"
+                                  : "#e53e3e",
+                            }}
+                          />
+                          {health[s.key]}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  placeholder="Add new bin type..."
-                  style={{ marginTop: "12px" }}
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter" && e.target.value.trim()) {
-                      setBinSettings({
-                        ...binSettings,
-                        binTypes: [
-                          ...binSettings.binTypes,
-                          e.target.value.trim(),
-                        ],
-                      });
-                      e.target.value = "";
-                    }
-                  }}
-                />
-              </div>
-            </div>
+              )}
+            </>
           )}
-
-          {/* Account Settings */}
-          {/* Account Settings */}
-          {activeTab === "account" && (
-            <div>
-              <h2 className="section-title">Account Settings</h2>
-              {(() => {
-                const user = getCurrentUser();
-                return (
-                  <>
-                    <div className="form-group">
-                      <label>Current User</label>
-                      <input
-                        type="text"
-                        value={user.name}
-                        disabled
-                        style={{ background: "#f8fafc" }}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Email Address</label>
-                      <input
-                        type="email"
-                        value={user.email}
-                        disabled
-                        style={{ background: "#f8fafc" }}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Role</label>
-                      <input
-                        type="text"
-                        value={user.role}
-                        disabled
-                        style={{ background: "#f8fafc" }}
-                      />
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          )}
-
-          <button className="save-button" onClick={handleSave}>
-            Save Settings
-          </button>
         </div>
       </div>
     </div>
   );
 };
+
+// Shared micro-styles
+const sTitle = {
+  fontSize: "18px",
+  fontWeight: "600",
+  color: "#2d3748",
+  margin: "0 0 24px",
+  paddingBottom: "12px",
+  borderBottom: "2px solid #e2e8f0",
+};
+const formRow = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "20px",
+};
+const formGroup = { marginBottom: "16px" };
+const label = {
+  display: "block",
+  fontSize: "13px",
+  fontWeight: "600",
+  color: "#374151",
+  marginBottom: "5px",
+};
+const input = {
+  width: "100%",
+  padding: "9px 12px",
+  border: "1px solid #d1d5db",
+  borderRadius: "6px",
+  fontSize: "14px",
+  boxSizing: "border-box",
+  fontFamily: "inherit",
+  background: "white",
+};
+const saveBtn = {
+  background: "#38a169",
+  color: "white",
+  border: "none",
+  padding: "11px 28px",
+  borderRadius: "6px",
+  fontSize: "14px",
+  fontWeight: "600",
+  cursor: "pointer",
+  marginTop: "24px",
+};
+const card = {
+  background: "white",
+  border: "1px solid #edf2f7",
+  borderRadius: "10px",
+  padding: "20px",
+  boxShadow: "0 2px 4px rgba(0,0,0,0.06)",
+};
+const cardHeader = {
+  display: "flex",
+  alignItems: "center",
+  marginBottom: "16px",
+  paddingBottom: "12px",
+  borderBottom: "1px solid #f7fafc",
+};
+const cardIcon = {
+  width: "44px",
+  height: "44px",
+  borderRadius: "10px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  marginRight: "14px",
+  fontSize: "22px",
+};
+const cardTitle = {
+  margin: 0,
+  fontSize: "16px",
+  fontWeight: "700",
+  color: "#2d3748",
+};
+const cardSub = { margin: "3px 0 0", fontSize: "12px", color: "#718096" };
 
 export default SettingsPage;

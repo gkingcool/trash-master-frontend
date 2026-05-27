@@ -1,4 +1,3 @@
-// src/components/AdminRoutePlanner.jsx
 import React, { useState, useEffect, useRef } from "react";
 import {
   MapContainer,
@@ -12,12 +11,11 @@ import {
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import axios from "axios";
-
-// Fix Leaflet marker icons
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
+// Fix Leaflet default markers
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -25,16 +23,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-// Depot coordinates for each starting location
-const DEPOT_COORDINATES = {
-  "central-maintenance": [47.6101, -122.2015],
-  "south-renton": [47.4829, -122.2171],
-  "north-kirkland": [47.6815, -122.2087],
-  "east-issaquah": [47.5301, -122.0326],
-  "west-seattle": [47.5707, -122.3862],
-};
-
-// Custom Depot Icon (Standard Leaflet Pin)
+const DEFAULT_DEPOT_COORDS = [47.6101, -122.2015];
 const depotIcon = L.icon({
   iconUrl: markerIcon,
   iconRetinaUrl: markerIcon2x,
@@ -42,218 +31,76 @@ const depotIcon = L.icon({
   iconSize: [25, 41],
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
-  tooltipAnchor: [16, -28],
   shadowSize: [41, 41],
 });
+const dumpIcon = L.divIcon({
+  className: "",
+  html: `<div style="position: relative; width: 25px; height: 41px;">
+<img 
+src="${markerIcon}" 
+style="
+width: 25px; 
+height: 41px; 
+filter: invert(0) sepia(100%) saturate(300%) hue-rotate(90deg) brightness(0.8);
+"
+/>
+</div>`,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
 
-// Map Controller Component
 function MapController({ bins }) {
   const map = useMap();
-  const previousBinCount = useRef(0);
-
+  const prevCount = useRef(0);
   useEffect(() => {
     if (bins.length > 0) {
-      const binCoordinates = bins
-        .filter((bin) => bin.location && bin.location.lat && bin.location.lon)
-        .map((bin) => [bin.location.lat, bin.location.lon]);
-      if (binCoordinates.length > 0) {
-        const bounds = L.latLngBounds(binCoordinates);
-        map.fitBounds(bounds, {
+      const coords = bins
+        .filter((b) => b.location?.lat && b.location?.lon)
+        .map((b) => [b.location.lat, b.location.lon]);
+      if (coords.length > 0) {
+        map.fitBounds(L.latLngBounds(coords), {
           padding: [50, 50],
           maxZoom: 15,
         });
       }
     }
-    previousBinCount.current = bins.length;
+    prevCount.current = bins.length;
   }, [bins, map]);
-
-  useEffect(() => {
-    const handleDoubleClick = () => {
-      const mapContainer = document.querySelector(".leaflet-container");
-      if (mapContainer) {
-        mapContainer.style.transition = "opacity 0.5s ease";
-        mapContainer.style.opacity = "0.3";
-
-        if (bins.length === 0) {
-          map.setView([47.6101, -122.2015], 13);
-        } else {
-          const binCoordinates = bins
-            .filter(
-              (bin) => bin.location && bin.location.lat && bin.location.lon,
-            )
-            .map((bin) => [bin.location.lat, bin.location.lon]);
-
-          if (binCoordinates.length > 0) {
-            const bounds = L.latLngBounds(binCoordinates);
-            map.fitBounds(bounds, {
-              padding: [50, 50],
-              maxZoom: 15,
-            });
-          }
-        }
-
-        setTimeout(() => {
-          mapContainer.style.opacity = "1";
-        }, 100);
-      }
-    };
-
-    map.on("dblclick", handleDoubleClick);
-    return () => {
-      map.off("dblclick", handleDoubleClick);
-    };
-  }, [bins, map]);
-
   return null;
 }
 
 const AdminRoutePlanner = () => {
   const [routeDateTime, setRouteDateTime] = useState("");
-  const [driversAvailable, setDriversAvailable] = useState(6);
-  const [shiftDuration, setShiftDuration] = useState("4");
-  const [startingDepot, setStartingDepot] = useState("central-maintenance");
+  const [driversAvailable, setDriversAvailable] = useState(3);
   const [strategy, setStrategy] = useState("predictive");
   const [loading, setLoading] = useState(false);
   const [generatedRoutes, setGeneratedRoutes] = useState([]);
   const [unassignedBins, setUnassignedBins] = useState([]);
   const [bins, setBins] = useState([]);
   const [error, setError] = useState(null);
-  const [availableDrivers, setAvailableDrivers] = useState([]);
   const [maxDrivers, setMaxDrivers] = useState(9);
-
-  // ✅ NEW: State to store road-based route coordinates
   const [roadRoutes, setRoadRoutes] = useState({});
+  const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [driversList, setDriversList] = useState([]);
 
-  // Helper to get marker color
-  const getBinFillColor = (fillLevel, isFlagged) => {
-    if (isFlagged) return "#e53e3e";
-    if (fillLevel >= 90) return "#e53e3e";
-    if (fillLevel >= 70) return "#dd6b20";
-    if (fillLevel >= 40) return "#38a169";
-    if (fillLevel > 0) return "#38a169";
-    return "#718096";
-  };
+  // State for Trucks to map drivers to their actual vehicles
+  const [trucks, setTrucks] = useState([]);
 
-  // ✅ NEW: Function to fetch road path from OSRM
-  const fetchRoadRoute = async (coordinates) => {
-    try {
-      // OSRM expects coordinates as lon,lat
-      const coordsString = coordinates
-        .map((coord) => `${coord[1]},${coord[0]}`)
-        .join(";");
-
-      const response = await axios.get(
-        `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`,
-      );
-
-      if (response.data.routes && response.data.routes.length > 0) {
-        // OSRM returns [lon, lat], we need [lat, lon] for Leaflet
-        return response.data.routes[0].geometry.coordinates.map((coord) => [
-          coord[1],
-          coord[0],
-        ]);
-      }
-    } catch (err) {
-      console.error("Error fetching road route from OSRM:", err);
-    }
-    return null;
-  };
-
-  // ✅ NEW: Fetch road paths for all generated routes
-  const fetchAllRoadRoutes = async (routes) => {
-    const newRoadRoutes = {};
-
-    for (const route of routes) {
-      const coords = getRouteCoordinates(route);
-      if (coords.length > 1) {
-        const path = await fetchRoadRoute(coords);
-        if (path) {
-          newRoadRoutes[route.id || route.truckId] = path;
-        }
-      }
-    }
-
-    setRoadRoutes(newRoadRoutes);
-  };
-
-  // Add this helper function
-  const getDepotFromCoordinates = (lat, lon) => {
-    const thresholds = {
-      "central-maintenance": [47.6101, -122.2015],
-      "south-renton": [47.4829, -122.2171],
-      "north-kirkland": [47.6815, -122.2087],
-      "east-issaquah": [47.5301, -122.0326],
-      "west-seattle": [47.5707, -122.3862],
-    };
-
-    let closestDepot = "central-maintenance";
-    let minDistance = Infinity;
-
-    for (const [depotName, coords] of Object.entries(thresholds)) {
-      const distance = Math.sqrt(
-        Math.pow(coords[0] - lat, 2) + Math.pow(coords[1] - lon, 2),
-      );
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestDepot = depotName;
-      }
-    }
-
-    return closestDepot;
-  };
-
-  // Auto-load bins, drivers, and latest routes on mount
   useEffect(() => {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    const formattedDateTime = now.toISOString().slice(0, 16);
-    const formattedDate = formattedDateTime.split("T")[0];
-    setRouteDateTime(formattedDateTime);
+    setRouteDateTime(now.toISOString().slice(0, 16));
     fetchBins();
     fetchDrivers();
-    fetchRoutesByDate(formattedDate);
+    fetchTrucks(); // Fetch trucks on load
+    fetchRoutesByDate(now.toISOString().split("T")[0]);
   }, []);
-
-  // ✅ NEW: Trigger road route fetching when routes change
-  useEffect(() => {
-    if (generatedRoutes.length > 0) {
-      fetchAllRoadRoutes(generatedRoutes);
-    }
-  }, [generatedRoutes]);
-
-  const fetchRoutesByDate = async (date) => {
-    try {
-      console.log("📅 Fetching routes for date:", date);
-      const response = await axios.get(
-        `http://localhost:8080/api/routes/by-date/${date}`,
-      );
-      console.log("✅ Fetched routes:", response.data.length);
-
-      const routes = response.data || [];
-      setGeneratedRoutes(routes);
-
-      // ✅ Update startingDepot based on the first route's depot
-      if (routes.length > 0 && routes[0].steps && routes[0].steps.length > 0) {
-        const firstStep = routes[0].steps[0]; // First step should be the depot
-        if (firstStep.lat && firstStep.lon) {
-          const detectedDepot = getDepotFromCoordinates(
-            firstStep.lat,
-            firstStep.lon,
-          );
-          setStartingDepot(detectedDepot);
-          console.log("📍 Detected depot from saved route:", detectedDepot);
-        }
-      }
-    } catch (err) {
-      console.error("Error fetching routes:", err);
-      setError("Failed to load saved routes. Is MongoDB running?");
-    }
-  };
 
   const fetchBins = async () => {
     try {
-      const response = await axios.get("http://localhost:8080/api/bins");
-      setBins(response.data);
+      const res = await axios.get("http://localhost:8080/api/bins");
+      setBins(res.data || []);
     } catch (err) {
       console.error("Error fetching bins:", err);
     }
@@ -261,89 +108,238 @@ const AdminRoutePlanner = () => {
 
   const fetchDrivers = async () => {
     try {
-      const response = await axios.get("http://localhost:8080/api/employees");
-      const drivers = response.data.filter(
-        (emp) => emp.role?.toUpperCase() === "DRIVER",
+      const res = await axios.get("http://localhost:8080/api/employees");
+      const drivers = res.data.filter(
+        (e) => e.role?.toUpperCase() === "DRIVER",
       );
-      setAvailableDrivers(drivers);
-      setMaxDrivers(drivers.length);
+      setDriversList(drivers);
+      setMaxDrivers(drivers.length || 9);
       if (drivers.length > 0 && driversAvailable > drivers.length) {
-        setDriversAvailable(drivers.length.toString());
+        setDriversAvailable(drivers.length);
       }
     } catch (err) {
       console.error("Error fetching drivers:", err);
-      setMaxDrivers(9);
+    }
+  };
+
+  // Fetch all trucks to build a Driver -> Truck mapping
+  const fetchTrucks = async () => {
+    try {
+      const res = await axios.get("http://localhost:8080/api/trucks");
+      setTrucks(res.data || []);
+    } catch (err) {
+      console.error("Error fetching trucks:", err);
+    }
+  };
+
+  // HELPER: Get the actual truck assigned to a specific driver
+  const getDriverTruck = (driverId) => {
+    if (!driverId) return null;
+    const truck = trucks.find((t) => t.assignedDriverId === driverId);
+    return truck ? truck.truckId : null;
+  };
+
+  const fetchRoutesByDate = async (date) => {
+    try {
+      const res = await axios.get(
+        `http://localhost:8080/api/routes/by-date/${date}`,
+      );
+      const routes = res.data || [];
+      setGeneratedRoutes(routes);
+      if (routes.length > 0) {
+        let depotCoords = DEFAULT_DEPOT_COORDS;
+        const firstStep = routes[0]?.steps?.[0];
+        if (firstStep?.lat != null && firstStep?.lon != null) {
+          depotCoords = [firstStep.lat, firstStep.lon];
+        }
+        // Show straight lines immediately so map is never blank
+        const straightLines = {};
+        routes.forEach((route) => {
+          const coords = getRouteCoordinates(route, depotCoords);
+          if (coords.length >= 2) {
+            straightLines[route.id || route.truckId] = coords;
+          }
+        });
+        setRoadRoutes(straightLines);
+        // Then upgrade to real road paths in the background
+        fetchAllRoadRoutes(routes, depotCoords);
+      }
+    } catch (err) {
+      console.error("Error fetching routes:", err);
+    }
+  };
+
+  const fetchRoadRoute = async (coordinates, retries = 2) => {
+    if (coordinates.length < 2) return null;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const coordsString = coordinates
+          .map((c) => `${c[1]},${c[0]}`)
+          .join(";");
+        const res = await axios.get(
+          `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`,
+          { timeout: 6000 },
+        );
+        if (res.data.routes?.length > 0) {
+          return res.data.routes[0].geometry.coordinates.map((c) => [
+            c[1],
+            c[0],
+          ]);
+        }
+      } catch {
+        if (attempt < retries)
+          await new Promise((r) => setTimeout(r, attempt * 1500));
+      }
+    }
+    return null; // Return null — straight lines already showing, no need to overwrite with same
+  };
+
+  const fetchAllRoadRoutes = async (routes, depotCoordsOverride) => {
+    // Straight lines are already set — try to upgrade each to real road path quietly
+    for (const route of routes) {
+      const coords = getRouteCoordinates(route, depotCoordsOverride);
+      const roadPath = await fetchRoadRoute(coords);
+      if (roadPath) {
+        // Only update this one route's path, keep others as-is
+        setRoadRoutes((prev) => ({
+          ...prev,
+          [route.id || route.truckId]: roadPath,
+        }));
+      }
+    }
+  };
+
+  const getRouteCoordinates = (routeDto, depotCoordsOverride) => {
+    if (!routeDto?.steps) return [];
+    const depot = depotCoordsOverride || DEFAULT_DEPOT_COORDS;
+    // Only include BIN stops — dump trips are logistical but distort the visual route
+    const binSteps = routeDto.steps.filter(
+      (s) => (s.type === "BIN" && s.binFillLevel > 0) || s.type === "DUMP",
+    );
+    if (binSteps.length === 0) return [];
+
+    return [depot, ...binSteps.map((s) => [s.lat, s.lon]), depot];
+  };
+
+  const handleDeleteRoute = async (routeId) => {
+    if (!window.confirm("Delete this route?")) return;
+    try {
+      await axios.delete(`http://localhost:8080/api/routes/${routeId}`);
+      setGeneratedRoutes((prev) => prev.filter((r) => r.id !== routeId));
+      if (selectedRouteId === routeId) setSelectedRouteId(null);
+      alert("Route deleted");
+    } catch (err) {
+      alert("Failed to delete route");
+    }
+  };
+
+  const handleAssignDriver = async (routeId, newDriverId) => {
+    // Check if this driver have a truck assigned?
+    const driverTruck = getDriverTruck(newDriverId);
+
+    if (!driverTruck) {
+      const proceed = window.confirm(
+        `⚠️ WARNING: This driver does not have a truck assigned!\n\n` +
+          `Please go to the Drivers/Fleet page to assign a truck before they start their shift.\n\n` +
+          `Do you still want to assign this route to them?`,
+      );
+      if (!proceed) return;
+    }
+
+    try {
+      await axios.patch(
+        `http://localhost:8080/api/routes/${routeId}/assign-driver?driverId=${newDriverId}`,
+      );
+
+      // Update local state immediately so the card reflects the new driver & their truck
+      setGeneratedRoutes((prev) =>
+        prev.map((r) =>
+          r.id === routeId ? { ...r, driverId: newDriverId } : r,
+        ),
+      );
+
+      alert(`Driver assigned successfully!`);
+      if (selectedRouteId === routeId) setSelectedRouteId(null);
+    } catch (err) {
+      alert("Failed to assign driver");
     }
   };
 
   const handleGenerateRoutes = async () => {
+    // Warn if no bins need pickup
+    if (binsNeedingPickup.length === 0) {
+      const proceed = window.confirm(
+        "⚠️ All bins are currently below 70% fill — no bins need pickup today.\n\n" +
+          "The route will still include any overdue bins (skipped from previous days).\n\n" +
+          "Generate anyway?",
+      );
+      if (!proceed) return;
+    }
+
     setLoading(true);
     setError(null);
     setUnassignedBins([]);
+    setRoadRoutes({});
+    setSelectedRouteId(null);
+
     try {
-      if (driversAvailable < 1 || driversAvailable > 9) {
-        setError("Number of drivers must be between 1 and 9");
+      if (driversAvailable < 1 || driversAvailable > maxDrivers) {
+        setError(`Number of drivers must be between 1 and ${maxDrivers}`);
         setLoading(false);
         return;
       }
 
-      if (availableDrivers.length === 0) {
-        setError("No drivers available. Add drivers from Teams page first.");
-        setLoading(false);
-        return;
-      }
-
-      console.log("Requesting routes for ", driversAvailable, " drivers ");
-
-      const depotCoords =
-        DEPOT_COORDINATES[startingDepot] ||
-        DEPOT_COORDINATES["central-maintenance"];
-
-      const response = await axios.post(
+      const [date, time] = routeDateTime.split("T");
+      const res = await axios.post(
         `http://localhost:8080/api/routes/generate`,
         null,
         {
           params: {
             trucks: driversAvailable,
-            date: routeDateTime.split("T")[0],
-            time: routeDateTime.split("T")[1] || "07:00",
-            strategy: strategy,
-            depotLat: depotCoords[0], // ✅ Send depot latitude
-            depotLon: depotCoords[1], // ✅ Send depot longitude
-            shiftDuration: shiftDuration,
+            date,
+            time: time || "07:00",
+            strategy,
           },
         },
       );
 
-      console.log("📤 Sending strategy: ", strategy);
-      console.log("Backend response: ", response.data);
+      const routesList = res.data.routes || [];
+      const urgentBins = res.data.urgentUnassignedBins || [];
 
-      const generatedRoutesList = response.data.routes || [];
-      const urgentBins = response.data.urgentUnassignedBins || [];
-
-      setGeneratedRoutes(generatedRoutesList);
+      setGeneratedRoutes(routesList);
       setUnassignedBins(urgentBins);
+      await fetchRoutesByDate(date);
 
-      const selectedDate = routeDateTime.split("T")[0];
-      await fetchRoutesByDate(selectedDate);
+      // Refresh trucks and drivers just in case
+      fetchTrucks();
+      fetchDrivers();
 
-      if (generatedRoutesList.length > 0) {
+      if (routesList.length > 0) {
         alert(
-          `✅ Successfully generated ${generatedRoutesList.length} optimized routes!`,
+          `✅ Successfully generated ${routesList.length} optimized routes!`,
         );
       } else {
-        setError("No routes were generated. Check backend logs for details.");
+        setError("No routes generated. Check if bins meet pickup thresholds.");
       }
     } catch (err) {
-      console.error("Error generating routes: ", err);
-      setError(err.response?.data?.message || "Failed to generate routes");
+      console.error("Route generation failed:", err);
+      setError(
+        err.response?.data || "Failed to generate routes. Check backend logs.",
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const getRouteColor = (index) => {
-    const colors = [
+  const getBinFillColor = (fillLevel, isFlagged) => {
+    if (isFlagged || fillLevel >= 90) return "#e53e3e";
+    if (fillLevel >= 70) return "#dd6b20";
+    if (fillLevel >= 40) return "#38a169";
+    return "#718096";
+  };
+
+  const getRouteColor = (i) =>
+    [
       "#3182ce",
       "#e53e3e",
       "#38a169",
@@ -353,26 +349,9 @@ const AdminRoutePlanner = () => {
       "#319795",
       "#d69e2e",
       "#9f7aea",
-    ];
-    return colors[index % colors.length];
-  };
+    ][i % 9];
 
-  const getRouteCoordinates = (routeDto) => {
-    if (!routeDto || !routeDto.steps) {
-      console.warn("⚠️ No steps found in route:", routeDto);
-      return [];
-    }
-    const depotCoords =
-      DEPOT_COORDINATES[startingDepot] ||
-      DEPOT_COORDINATES["central-maintenance"];
-
-    const binSteps = routeDto.steps.filter((step) => step.type === "BIN");
-    const binCoordinates = binSteps.map((step) => [step.lat, step.lon]);
-
-    return [depotCoords, ...binCoordinates];
-  };
-
-  const binsNeedingPickup = bins.filter((bin) => bin.fillLevel >= 70);
+  const binsNeedingPickup = bins.filter((b) => b.fillLevel >= 70);
 
   return (
     <div style={styles.container}>
@@ -397,49 +376,19 @@ const AdminRoutePlanner = () => {
             min="1"
             max={maxDrivers}
             value={driversAvailable}
-            onChange={(e) => {
-              const value = parseInt(e.target.value) || 1;
-              if (value <= maxDrivers) {
-                setDriversAvailable(value);
-              }
-            }}
-            disabled={maxDrivers === 0}
+            onChange={(e) =>
+              setDriversAvailable(
+                Math.max(
+                  1,
+                  Math.min(maxDrivers, parseInt(e.target.value) || 1),
+                ),
+              )
+            }
             style={styles.input}
           />
           <p style={styles.helperText}>
-            {maxDrivers} driver{maxDrivers !== 1 ? "s" : " "} available
-            {maxDrivers === 0 && " - Add drivers from Teams page"}
+            {maxDrivers} driver{maxDrivers !== 1 ? "s" : ""} available
           </p>
-        </div>
-
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Shift Duration</label>
-          <select
-            value={shiftDuration}
-            onChange={(e) => setShiftDuration(e.target.value)}
-            style={styles.input}
-          >
-            <option value="4">4 hours</option>
-            <option value="6">6 hours</option>
-            <option value="8">8 hours</option>
-          </select>
-        </div>
-
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Starting Depot</label>
-          <select
-            value={startingDepot}
-            onChange={(e) => setStartingDepot(e.target.value)}
-            style={styles.input}
-          >
-            <option value="central-maintenance">
-              Central Maintenance Facility - Bellevue
-            </option>
-            <option value="south-renton">South Depot - Renton</option>
-            <option value="north-kirkland">North Depot - Kirkland</option>
-            <option value="east-issaquah">East Depot - Issaquah</option>
-            <option value="west-seattle">West Depot - Seattle</option>
-          </select>
         </div>
 
         <div style={styles.formGroup}>
@@ -452,7 +401,7 @@ const AdminRoutePlanner = () => {
                 value="predictive"
                 checked={strategy === "predictive"}
                 onChange={(e) => setStrategy(e.target.value)}
-                style={{ marginRight: "8px" }}
+                style={{ marginRight: 8 }}
               />
               Smart Route (Predictive AI)
             </label>
@@ -463,7 +412,7 @@ const AdminRoutePlanner = () => {
                 value="simple"
                 checked={strategy === "simple"}
                 onChange={(e) => setStrategy(e.target.value)}
-                style={{ marginRight: "8px" }}
+                style={{ marginRight: 8 }}
               />
               Smart Route (TSP Optimization)
             </label>
@@ -471,7 +420,6 @@ const AdminRoutePlanner = () => {
         </div>
 
         <button
-          className="generate-btn"
           onClick={handleGenerateRoutes}
           disabled={loading}
           style={styles.generateBtn}
@@ -480,28 +428,14 @@ const AdminRoutePlanner = () => {
         </button>
 
         {unassignedBins.length > 0 && (
-          <div
-            style={{
-              marginTop: "20px",
-              padding: "10px",
-              background: "#fff5f5",
-              border: "1px solid #fed7d7",
-              borderRadius: "4px",
-            }}
-          >
-            <h4 style={{ color: "#c53030", margin: "0 0 10px 0" }}>
-              ⚠️ {unassignedBins.length} Urgent Bins Could Not Be Assigned
+          <div style={styles.urgentAlert}>
+            <h4 style={{ color: "#c53030", margin: "0 0 8px" }}>
+              ⚠️ {unassignedBins.length} Urgent Bins Unassigned
             </h4>
-            <ul
-              style={{
-                paddingLeft: "20px",
-                fontSize: "12px",
-                color: "#742a2a",
-              }}
-            >
-              {unassignedBins.map((bin) => (
-                <li key={bin.binId}>
-                  {bin.binId}: {bin.reason} ({bin.fillLevel}% full)
+            <ul style={{ paddingLeft: 20, fontSize: 12, color: "#742a2a" }}>
+              {unassignedBins.map((b) => (
+                <li key={b.binId}>
+                  {b.binId}: {b.reason} ({b.fillLevel}% full)
                 </li>
               ))}
             </ul>
@@ -512,40 +446,23 @@ const AdminRoutePlanner = () => {
       <div style={styles.mapSection}>
         <div style={styles.mapContainer}>
           <MapContainer
-            center={[47.6101, -122.2015]}
+            center={DEFAULT_DEPOT_COORDS}
             zoom={13}
             style={{ height: "100%", width: "100%" }}
           >
             <TileLayer
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              attribution="&copy; OpenStreetMap"
             />
-
-            {/* ✅ UPDATED: Depot is now a Marker */}
-            <Marker
-              position={
-                DEPOT_COORDINATES[startingDepot] ||
-                DEPOT_COORDINATES["central-maintenance"]
-              }
-              icon={depotIcon}
-            >
+            <Marker position={DEFAULT_DEPOT_COORDS} icon={depotIcon}>
               <Popup>
-                <strong>🏢 Starting Depot</strong>
-                <br />
-                {startingDepot === "central-maintenance" &&
-                  "Central Maintenance Facility - Bellevue"}
-                {startingDepot === "south-renton" && "South Depot - Renton"}
-                {startingDepot === "north-kirkland" && "North Depot - Kirkland"}
-                {startingDepot === "east-issaquah" && "East Depot - Issaquah"}
-                {startingDepot === "west-seattle" && "West Depot - Seattle"}
+                <strong>🏢 Starting Depot (Bellevue Facility)</strong>
               </Popup>
             </Marker>
-
             <MapController bins={bins} />
 
             {bins.map((bin) => {
-              if (!bin.location || !bin.location.lat || !bin.location.lon)
-                return null;
+              if (!bin.location?.lat || !bin.location?.lon) return null;
               return (
                 <CircleMarker
                   key={bin.id || bin.binId}
@@ -556,7 +473,6 @@ const AdminRoutePlanner = () => {
                   fillColor={getBinFillColor(bin.fillLevel, bin.isFlagged)}
                   color="#fff"
                   weight={2}
-                  opacity={1}
                   fillOpacity={0.8}
                 >
                   <Popup>
@@ -564,9 +480,8 @@ const AdminRoutePlanner = () => {
                     <br />
                     {bin.locationName}
                     <br />
-                    Fill: {bin.fillLevel}%
-                    <br />
-                    Status:{"  "}
+                    Fill: {bin.fillLevel}%<br />
+                    Status:{" "}
                     {bin.isFlagged
                       ? "🚩 Flagged"
                       : bin.fillLevel >= 90
@@ -579,29 +494,57 @@ const AdminRoutePlanner = () => {
               );
             })}
 
-            {/* ✅ UPDATED: Render Routes using Road Coordinates from OSRM */}
-            {generatedRoutes.map((route, index) => {
-              // Use fetched road route if available, otherwise fall back to straight lines
-              const routeKey = route.id || route.truckId;
-              const coordinates =
-                roadRoutes[routeKey] || getRouteCoordinates(route);
+            {generatedRoutes.flatMap((route, routeIndex) =>
+              (route.steps || [])
+                .filter((s) => s.type === "DUMP")
+                .map((step, stepIndex) => (
+                  <Marker
+                    key={`dump-${routeIndex}-${stepIndex}`}
+                    position={[step.lat, step.lon]}
+                    icon={dumpIcon}
+                  >
+                    <Popup>
+                      <strong>
+                        🏭 {step.stationName || "Transfer Station"}
+                      </strong>
+                      <br />
+                      Route {routeIndex + 1}
+                      <br />
+                      Truck load before dump:{" "}
+                      {step.currentTruckLoadYards?.toFixed(1)} yds³
+                    </Popup>
+                  </Marker>
+                )),
+            )}
+
+            {generatedRoutes.map((route, i) => {
+              if (route.status === "COMPLETED") return null;
+
+              const coords =
+                roadRoutes[route.id || route.truckId] ||
+                getRouteCoordinates(route);
+
+              if (!coords || coords.length < 2) return null;
 
               return (
                 <Polyline
-                  key={index}
-                  positions={coordinates}
-                  color={getRouteColor(index)}
+                  key={route.id || i}
+                  positions={coords}
+                  color={getRouteColor(i)}
                   weight={5}
                   opacity={0.8}
                 >
                   <Popup>
-                    <strong>Route {index + 1}</strong>
+                    <strong>Route {i + 1}</strong>
                     <br />
-                    Driver: {route.driverId || `Driver ${index + 1}`}
+                    Driver: {route.driverId || `Driver ${i + 1}`}
                     <br />
-                    Truck: {route.truckId}
+                    Truck: {getDriverTruck(route.driverId) || route.truckId}
                     <br />
-                    Stops: {route.steps.filter((s) => s.type === "BIN").length}
+                    Stops:{" "}
+                    {route.steps?.filter(
+                      (s) => s.type === "BIN" && s.binFillLevel > 0,
+                    ).length || 0}
                   </Popup>
                 </Polyline>
               );
@@ -610,120 +553,240 @@ const AdminRoutePlanner = () => {
         </div>
 
         <div style={styles.binsStats}>
-          <h3
-            style={{
-              margin: "0 0 6px 0",
-              fontSize: "14px",
-              fontWeight: "600",
-              color: "#2d3748",
-            }}
-          >
+          <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 600 }}>
             📊 Bin Status
           </h3>
-          <p style={{ margin: "2px 0", fontSize: "13px", color: "#4a5568" }}>
-            <strong style={{ color: "#2d3748" }}>Total Bins: </strong>
-            {bins.length}
+          <p style={{ margin: "2px 0", fontSize: 13 }}>
+            <strong>Total: </strong> {bins.length}
           </p>
-          <p style={{ margin: "2px 0", fontSize: "13px", color: "#4a5568" }}>
-            <strong style={{ color: "#2d3748" }}>
-              Needing Pickup (≥70%):{" "}
-            </strong>
+          <p style={{ margin: "2px 0", fontSize: 13 }}>
+            <strong>Needing Pickup (≥70%): </strong>{" "}
             <span style={{ color: "#e53e3e", fontWeight: "bold" }}>
               {binsNeedingPickup.length}
             </span>
           </p>
-          <p style={{ margin: "2px 0", fontSize: "13px", color: "#4a5568" }}>
-            <strong style={{ color: "#2d3748" }}>Empty (0%): </strong>
+          <p style={{ margin: "2px 0", fontSize: 13 }}>
+            <strong>Empty (0%): </strong>{" "}
             <span style={{ color: "#718096", fontWeight: "bold" }}>
               {bins.filter((b) => b.fillLevel === 0).length}
             </span>
           </p>
-          {binsNeedingPickup.length === 0 &&
-            bins.filter((b) => b.fillLevel === 0).length === 0 && (
-              <p
-                style={{
-                  color: "#e53e3e",
-                  fontWeight: "bold",
-                  fontSize: "12px",
-                  marginTop: "6px",
-                }}
-              >
-                ⚠️ No bins need pickup yet. Add bins with fill level ≥ 70%
-              </p>
-            )}
         </div>
 
         <div style={styles.driverCards}>
           {generatedRoutes.length === 0 ? (
             <div
               style={{
-                gridColumn: "1 / -1",
+                gridColumn: "1/-1",
                 textAlign: "center",
-                padding: "40px",
+                padding: 40,
                 color: "#718096",
               }}
             >
-              <div style={{ fontSize: "48px", marginBottom: "16px" }}>🗺️</div>
-              <h3
-                style={{
-                  fontSize: "18px",
-                  marginBottom: "8px",
-                  color: "#2d3748",
-                  fontWeight: "600",
-                }}
-              >
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🗺️</div>
+              <h3 style={{ fontSize: 18, marginBottom: 8, color: "#2d3748" }}>
                 No Routes Generated Yet
               </h3>
-              <p style={{ fontSize: "14px" }}>
+              <p style={{ fontSize: 14 }}>
                 Click "Generate Optimized Routes" to create AI-optimized routes
               </p>
             </div>
           ) : (
-            generatedRoutes.map((route, index) => {
-              const hours = Math.floor(route.totalTimeMinutes / 60);
-              const minutes = route.totalTimeMinutes % 60;
-              const binStops = route.steps.filter(
-                (s) => s.type === "BIN",
-              ).length;
+            generatedRoutes.map((route, i) => {
+              const isCompleted = route.status === "COMPLETED";
+
+              // ✅ FIX: Removed the top-level hrs and mins calculation
+
+              const binStops = isCompleted
+                ? 0
+                : route.steps?.filter(
+                    (s) => s.type === "BIN" && s.binFillLevel > 0,
+                  ).length || 0;
+
+              const dumpStops = isCompleted
+                ? 0
+                : route.steps?.filter(
+                    (s) => s.type === "DUMP" && s.action === "EMPTY_TRUCK",
+                  ).length || 0;
+
+              let timeDisplay;
+              if (isCompleted) {
+                timeDisplay = "N/A";
+              } else {
+                const hrs = Math.floor(route.totalTimeMinutes / 60);
+                const mins = route.totalTimeMinutes % 60;
+                timeDisplay = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+              }
+
+              const isSelected = selectedRouteId === route.id;
+
+              const displayDriverId = route.driverId;
+              const displayTruckId =
+                getDriverTruck(displayDriverId) || route.truckId;
+              const hasTruck = !!getDriverTruck(displayDriverId);
 
               return (
                 <div
-                  key={index}
+                  key={route.id || i}
+                  onClick={() => setSelectedRouteId(route.id)}
                   style={{
                     ...styles.driverCard,
-                    borderBottomColor: getRouteColor(index),
+                    borderBottomColor: getRouteColor(i),
+                    border: isSelected
+                      ? "2px solid #3182ce"
+                      : "1px solid #edf2f7",
+                    boxShadow: isSelected
+                      ? "0 4px 12px rgba(49, 130, 206, 0.2)"
+                      : "0 1px 3px rgba(0,0,0,0.05)",
+                    cursor: "pointer",
+                    transform: isSelected ? "translateY(-2px)" : "none",
+                    // Optional: Make the card look slightly faded if completed
+                    opacity: isCompleted ? 0.6 : 1,
                   }}
                 >
-                  <h3 style={styles.driverCardTitle}>Driver {index + 1}</h3>
-                  <p style={styles.driverCardText}>{binStops} Stops</p>
+                  <h3 style={styles.driverCardTitle}>
+                    Driver {i + 1}
+                    {/* ✅ ADD: Show a completed badge */}
+                    {isCompleted && (
+                      <span
+                        style={{
+                          color: "#38a169",
+                          fontSize: "14px",
+                          marginLeft: "8px",
+                        }}
+                      >
+                        ✅ Completed
+                      </span>
+                    )}
+                  </h3>
+
                   <p style={styles.driverCardText}>
-                    ⏱️ {hours > 0 ? `${hours}h` : "     "}
-                    {minutes}m
+                    📌 {binStops} Bin Stop{binStops !== 1 ? "s" : ""}
                   </p>
+                  {dumpStops > 0 && (
+                    <p style={styles.driverCardText}>
+                      🏭 {dumpStops} Dump Trip{dumpStops !== 1 ? "s" : ""}
+                    </p>
+                  )}
+
+                  {/* ✅ Use timeDisplay here instead of hrs and mins */}
+                  <p style={styles.driverCardText}>⏱️ {timeDisplay}</p>
+
                   <div style={styles.routeInfo}>
                     <strong>Truck: </strong>
-                    {route.truckId || "N/A"}
+                    <span
+                      style={{
+                        color: hasTruck ? "#2d3748" : "#e53e3e",
+                        fontWeight: hasTruck ? "normal" : "bold",
+                      }}
+                    >
+                      {displayTruckId || "N/A"}
+                    </span>
+                    {!hasTruck && displayDriverId && (
+                      <div
+                        style={{
+                          color: "#e53e3e",
+                          fontSize: "11px",
+                          marginTop: "4px",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        ⚠️ No truck assigned!
+                      </div>
+                    )}
                     <br />
-                    <strong>Driver: </strong>
-                    {route.driverId || "Not assigned"}
+                    <strong>Driver: </strong>{" "}
+                    {displayDriverId || "Not assigned"}
                   </div>
+
+                  {isSelected && (
+                    <div
+                      style={{
+                        marginTop: "10px",
+                        fontSize: "12px",
+                        color: "#3182ce",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      ✓ Selected (See Controls Below)
+                    </div>
+                  )}
                 </div>
               );
             })
           )}
         </div>
+
+        {/* Route Management Controls */}
+        {selectedRouteId && (
+          <div style={styles.actionPanel}>
+            <h4 style={styles.actionTitle}>Route Management</h4>
+            <p style={styles.actionHint}>
+              Click a route card above to select it.
+            </p>
+
+            <div style={styles.selectedBox}>
+              <p style={styles.selectedText}>
+                Managing:{" "}
+                <strong>
+                  {(() => {
+                    const selectedRoute = generatedRoutes.find(
+                      (r) => r.id === selectedRouteId,
+                    );
+                    if (!selectedRoute) return "Unknown";
+                    // Show the dynamic truck in the sidebar too
+                    return (
+                      getDriverTruck(selectedRoute.driverId) ||
+                      selectedRoute.truckId
+                    );
+                  })()}
+                </strong>
+              </p>
+
+              <button
+                onClick={() => handleDeleteRoute(selectedRouteId)}
+                style={styles.deleteBtnSidebar}
+              >
+                🗑️ Delete This Route
+              </button>
+
+              <div style={{ marginTop: "12px" }}>
+                <label style={{ ...styles.label, fontSize: "12px" }}>
+                  Reassign Driver:
+                </label>
+                <select
+                  onChange={(e) => {
+                    if (e.target.value)
+                      handleAssignDriver(selectedRouteId, e.target.value);
+                  }}
+                  style={styles.input}
+                  defaultValue=""
+                >
+                  <option value="" disabled>
+                    Select a driver...
+                  </option>
+                  {driversList.map((driver) => {
+                    const truck = getDriverTruck(driver.employeeId);
+                    return (
+                      <option key={driver.employeeId} value={driver.employeeId}>
+                        {driver.firstName} {driver.lastName} (
+                        {driver.employeeId}){" "}
+                        {truck ? `- ${truck}` : "⚠️ No Truck"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
-// Inline styles
 const styles = {
-  container: {
-    display: "flex",
-    height: "100%",
-    backgroundColor: "#f5f7fa",
-  },
+  container: { display: "flex", height: "100vh", backgroundColor: "#f5f7fa" },
   formSection: {
     width: "380px",
     padding: "25px",
@@ -738,9 +801,7 @@ const styles = {
     textAlign: "center",
     color: "#2d3748",
   },
-  formGroup: {
-    marginBottom: "20px",
-  },
+  formGroup: { marginBottom: "20px" },
   label: {
     display: "block",
     marginBottom: "8px",
@@ -754,24 +815,16 @@ const styles = {
     border: "1px solid #cbd5e0",
     borderRadius: "4px",
     fontSize: "14px",
-    backgroundColor: "white",
+    boxSizing: "border-box",
   },
-  radioGroup: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-  },
+  radioGroup: { display: "flex", flexDirection: "column", gap: "10px" },
   radioLabel: {
     display: "flex",
     alignItems: "center",
     cursor: "pointer",
     fontSize: "14px",
   },
-  helperText: {
-    fontSize: "12px",
-    color: "#718096",
-    marginTop: "4px",
-  },
+  helperText: { fontSize: "12px", color: "#718096", marginTop: "4px" },
   generateBtn: {
     width: "100%",
     padding: "12px",
@@ -783,7 +836,6 @@ const styles = {
     fontWeight: "600",
     cursor: "pointer",
     marginTop: "10px",
-    transition: "background 0.2s",
   },
   mapSection: {
     flex: 1,
@@ -822,6 +874,7 @@ const styles = {
     textAlign: "center",
     position: "relative",
     borderBottom: "4px solid",
+    transition: "all 0.2s ease",
   },
   driverCardTitle: {
     margin: "0 0 12px",
@@ -845,6 +898,7 @@ const styles = {
     borderTop: "1px solid #e2e8f0",
     fontSize: "12px",
     color: "#718096",
+    textAlign: "center", // ✅ Added to center the Truck/Driver text
   },
   errorMessage: {
     backgroundColor: "#fed7d7",
@@ -853,6 +907,45 @@ const styles = {
     borderRadius: "4px",
     marginBottom: "16px",
     fontSize: "14px",
+  },
+  urgentAlert: {
+    marginTop: "20px",
+    padding: "10px",
+    background: "#fff5f5",
+    border: "1px solid #fed7d7",
+    borderRadius: "4px",
+  },
+  actionPanel: {
+    marginTop: "24px",
+    padding: "16px",
+    backgroundColor: "#f8fafc",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0",
+  },
+  actionTitle: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#2d3748",
+    margin: "0 0 8px 0",
+  },
+  actionHint: { fontSize: "12px", color: "#718096", margin: "0 0 12px 0" },
+  selectedBox: {
+    backgroundColor: "white",
+    padding: "12px",
+    borderRadius: "6px",
+    border: "1px solid #cbd5e0",
+  },
+  selectedText: { fontSize: "13px", color: "#4a5568", margin: "0 0 12px 0" },
+  deleteBtnSidebar: {
+    width: "100%",
+    padding: "10px",
+    backgroundColor: "#fed7d7",
+    color: "#e53e3e",
+    border: "1px solid #feb2b2",
+    borderRadius: "4px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
   },
 };
 

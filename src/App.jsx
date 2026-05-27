@@ -265,7 +265,7 @@ export default function App() {
           <Route path="route-planner" element={<AdminRoutePlanner />} />
           <Route path="teams" element={<TeamsPage />} />
           <Route path="bins" element={<BinsPage />} />
-          <Route path="deployments" element={<DeploymentsPage />} />
+          <Route path="deployments" element={<Navigate to="/settings" replace />} />
           <Route path="trucks" element={<TruckManagement />} />
           <Route path="route-status" element={<RouteStatusPage />} />
           <Route path="sensors" element={<SensorPage />} />
