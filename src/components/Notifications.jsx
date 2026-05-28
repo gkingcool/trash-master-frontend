@@ -33,7 +33,12 @@ const Notifications = () => {
       const data = response.data;
 
       // Admin bell ONLY shows driver reports. Ignores system/driver alerts.
-      const adminNotifications = data.filter((n) => n.driverId === "ADMIN");
+      // const adminNotifications = data.filter((n) => n.driverId === "ADMIN");
+      const dismissedIds = getDismissedBellIds();
+
+      const adminNotifications = data.filter(
+        (n) => n.driverId === "ADMIN" && !dismissedIds.includes(n.id),
+      );
 
       setNotifications(adminNotifications);
       setUnreadCount(
