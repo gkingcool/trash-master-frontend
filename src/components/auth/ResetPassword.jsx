@@ -6,6 +6,8 @@ import "./login.css";
 import logo from "../../assets/icons/recycling-icon.png";
 import truck from "../../assets/icons/truck.png";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
@@ -34,8 +36,11 @@ const ResetPassword = () => {
 
     const validateToken = async () => {
       try {
+        // const response = await axios.get(
+        //   `http://localhost:8080/api/auth/validate-token?token=${token}`,
+        // );
         const response = await axios.get(
-          `http://localhost:8080/api/auth/validate-token?token=${token}`,
+          `${API_URL}/api/auth/validate-token?token=${token}`,
         );
         setTokenValid(response.data.valid);
         if (!response.data.valid) {
@@ -85,7 +90,12 @@ const ResetPassword = () => {
     setLoading(true);
 
     try {
-      await axios.post("http://localhost:8080/api/auth/reset-password", {
+      // await axios.post("http://localhost:8080/api/auth/reset-password", {
+      //   token: token,
+      //   newPassword: formData.password,
+      //   confirmPassword: formData.confirmPassword,
+      // });
+      await axios.post(`${API_URL}/api/auth/reset-password`, {
         token: token,
         newPassword: formData.password,
         confirmPassword: formData.confirmPassword,

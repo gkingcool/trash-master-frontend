@@ -6,6 +6,8 @@ import "./login.css";
 import logo from "../../assets/icons/recycling-icon.png";
 import truck from "../../assets/icons/truck.png";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+
 const ForgotPassword = () => {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,10 +30,13 @@ const ForgotPassword = () => {
 
     try {
       // ✅ Call backend API
-      const response = await axios.post(
-        "http://localhost:8080/api/auth/forgot-password",
-        { email: email.trim() },
-      );
+      // const response = await axios.post(
+      //   "http://localhost:8080/api/auth/forgot-password",
+      //   { email: email.trim() },
+      // );
+      const response = await axios.post(`${API_URL}/api/auth/forgot-password`, {
+        email: email.trim(),
+      });
 
       if (response.data.success) {
         // ✅ Check if backend returned a token (development mode)

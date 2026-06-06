@@ -5,6 +5,8 @@ import logo from "../../assets/icons/recycling-icon.png";
 import truck from "../../assets/icons/truck.png";
 import axios from "axios";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+
 const Login = () => {
   const navigate = useNavigate();
   // ✅ Renamed username to email
@@ -20,13 +22,17 @@ const Login = () => {
     setLoading(true);
 
     try {
-      const response = await axios.post(
-        "http://localhost:8080/api/employees/login",
-        {
-          email: email.trim(),
-          password: password.trim(),
-        },
-      );
+      // const response = await axios.post(
+      //   "http://localhost:8080/api/employees/login",
+      //   {
+      //     email: email.trim(),
+      //     password: password.trim(),
+      //   },
+      // );
+      const response = await axios.post(`${API_URL}/api/employees/login`, {
+        email: email.trim(),
+        password: password.trim(),
+      });
 
       // ✅ Save auth info to localStorage
       localStorage.setItem(
