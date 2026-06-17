@@ -516,7 +516,7 @@ const Dashboard = () => {
         const binsData = binsRes.data || [];
 
         const overdueBins = (overdueRes.data || []).filter(
-          (b) => b.fillLevel > 0 && (b.daysOverdue ?? 0) > 1,
+          (b) => b.fillLevel > 0 && (b.daysOverdue ?? 0) > 0,
         );
 
         const flaggedBins = flaggedRes.data || [];

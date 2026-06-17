@@ -57,7 +57,16 @@ const BinsPage = () => {
       else if (activeFilter === "public") url = `${API_BASE_URL}/zone/PUBLIC`;
 
       const response = await axios.get(url);
-      setBins(response.data);
+
+      if (activeFilter === "overdue") {
+        const filteredOverdue = response.data.filter(
+          (bin) => bin.fillLevel > 0,
+        );
+        setBins(filteredOverdue);
+      } else {
+        setBins(response.data);
+      }
+      // setBins(response.data);
       setLoading(false);
     } catch (err) {
       console.error("Error fetching bins:", err);
